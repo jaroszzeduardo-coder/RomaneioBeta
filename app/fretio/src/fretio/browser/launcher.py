@@ -2,6 +2,7 @@ import asyncio
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 
 from playwright.async_api import async_playwright
@@ -89,7 +90,10 @@ async def launch_browser_resilient(playwright=None, *, headless: bool = True, ar
                 f"--user-data-dir={profile_dir}",
                 "--no-first-run",
                 "--no-default-browser-check",
-                "--no-sandbox",
+                # Sandbox do Chromium só é desabilitado fora do Windows (CI/containers
+                # Linux sem user namespaces). No desktop Windows o sandbox fica ATIVO,
+                # restaurando o isolamento do renderer (CWE-693).
+                *(["--no-sandbox"] if sys.platform != "win32" else []),
                 "--disable-gpu",
                 "--disable-software-rasterizer",
                 "--disable-dev-shm-usage",

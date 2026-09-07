@@ -74,6 +74,18 @@ def _target_name(empresa: Any, transportadora: Any, campo: Any) -> str:
     )
 
 
+def _redact_target(target: str) -> str:
+    """Mascara o segmento da empresa antes de logar (CWE-532).
+
+    O formato é ``Fretio:<empresa>:<transportadora>:<campo>``. Transportadora e
+    campo são nomes públicos normalizados; só a empresa pode revelar o cliente.
+    """
+    parts = str(target).split(":", 3)
+    if len(parts) == 4:
+        parts[1] = "***"
+    return ":".join(parts)
+
+
 def _read_windows_credential(target: str) -> str | None:
     if os.name != "nt":
         return None
@@ -95,7 +107,7 @@ def _read_windows_credential(target: str) -> str | None:
         finally:
             advapi32.CredFree(cred_ptr)
     except Exception as exc:
-        _warn("Falha ao ler credencial segura %s: %s", target, exc)
+        _warn("Falha ao ler credencial segura %s: %s", _redact_target(target), exc)
         return None
 
 
@@ -117,10 +129,10 @@ def _write_windows_credential(target: str, value: str) -> bool:
         credential.UserName = "Fretio"
         ok = bool(advapi32.CredWriteW(ctypes.byref(credential), 0))
         if not ok:
-            _warn("Credential Manager recusou gravação para %s", target)
+            _warn("Credential Manager recusou gravação para %s", _redact_target(target))
         return ok
     except Exception as exc:
-        _warn("Falha ao gravar credencial segura %s: %s", target, exc)
+        _warn("Falha ao gravar credencial segura %s: %s", _redact_target(target), exc)
         return False
 
 
@@ -142,7 +154,7 @@ def set_credential(empresa: str, transportadora: str, campo: str, valor: str) ->
     if _write_windows_credential(target, value):
         return True
     _memory_fallback[target] = value
-    _warn("Usando fallback em memória para credencial %s", target)
+    _warn("Usando fallback em memória para credencial %s", _redact_target(target))
     return False
 
 

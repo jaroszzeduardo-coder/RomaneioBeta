@@ -114,22 +114,33 @@ def test_config_get_nao_envia_senha_em_texto_puro(tmp_path):
     assert campos["cnpj"]["valor"] == "12345678000190"  # campo comum continua
 
 
-def test_config_salvar_credenciais_senha_em_branco_mantem(tmp_path):
+def test_config_salvar_credenciais_senha_nao_grava_em_claro(tmp_path, monkeypatch):
     import web_app
+    import secure_credentials
     p = tmp_path / "CONFIG.toml"
     p.write_text(_config_toml(senha="segredo123"), encoding="utf-8")
     api = web_app.Api(empresa="TESTE", config_path=p)
 
-    # Salvar com senha em branco e CNPJ novo: senha salva deve permanecer.
+    creds: list[tuple] = []
+    monkeypatch.setattr(
+        secure_credentials, "set_credential",
+        lambda emp, transp, campo, val: (creds.append((transp, campo, val)) or True),
+    )
+
+    # Senha em branco + CNPJ novo: a senha legada em claro é migrada para o
+    # Credential Manager e REMOVIDA do TOML (nunca fica em texto claro).
     assert api.config_salvar_credenciais("braspress", {"cnpj": "99999999000199", "senha": ""})["ok"]
     raw = web_app._load_config(p)["transportadoras"]["braspress"]
-    assert raw["senha"] == "segredo123"
+    assert "senha" not in raw                              # plaintext removido do arquivo
     assert raw["cnpj"] == "99999999000199"
+    assert ("braspress", "senha", "segredo123") in creds   # legada preservada no CredMgr
 
-    # Salvar com senha preenchida: deve atualizar.
+    # Senha preenchida: vai para o Credential Manager, nunca para o TOML.
+    creds.clear()
     assert api.config_salvar_credenciais("braspress", {"senha": "novaSenha"})["ok"]
     raw = web_app._load_config(p)["transportadoras"]["braspress"]
-    assert raw["senha"] == "novaSenha"
+    assert raw.get("senha") != "novaSenha"
+    assert ("braspress", "senha", "novaSenha") in creds
 
 
 # ── Bug de UI: status em andamento rotulado como "erro" (cot_status.js) ──────

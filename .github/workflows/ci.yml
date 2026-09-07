@@ -26,15 +26,15 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: |
-            installer/requirements.txt
-            installer/requirements.in
             installer/requirements-lock.txt
 
       - name: Install dependencies
         shell: bash
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          python -m pip install -r installer/requirements.txt
+          # Instala o conjunto fixado/auditado (mesma convenção do build de produção),
+          # não as versões flutuantes de requirements.in — evita supply-chain drift no CI (CWE-1104).
+          python -m pip install --no-deps -r installer/requirements-lock.txt
           if [ -f requirements-dev.txt ]; then
             python -m pip install -r requirements-dev.txt
           fi

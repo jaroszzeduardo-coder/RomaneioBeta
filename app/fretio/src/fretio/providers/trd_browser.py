@@ -25,7 +25,6 @@ class TRDBrowserMixin:
             headless=self.headless,
             args=[
                 '--disable-blink-features=AutomationControlled',
-                '--no-sandbox',
                 '--enable-features=NetworkService,NetworkServiceInProcess',
                 '--disable-features=IsolateOrigins,site-per-process,TranslateUI',
             ],

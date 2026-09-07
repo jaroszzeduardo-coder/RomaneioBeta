@@ -9,12 +9,11 @@ A descoberta é feita 100% via GitHub Releases. O app consulta a release mais re
 ```toml
 [fretio]
 github_repo = "kaianesteffens/RomaneioBeta"
-github_repo_aliases = ["kaianesteffens/RomaneioBeta-releases"]
 ```
 
 O updater lê a tag/versão da release mais recente e o asset do ZIP de update anexado a ela. Se a versão da release for maior que a versão local, o app mostra o update.
 
-`github_repo_aliases` serve apenas como fallback histórico para builds antigos que ainda apontavam para o repositório legado de releases.
+`github_repo_aliases` é um mecanismo opcional para consultar repositórios adicionais. O antigo repositório de releases `kaianesteffens/RomaneioBeta-releases` foi desativado e não faz mais parte dos repositórios padrão do updater.
 
 ## Aplicação do update
 

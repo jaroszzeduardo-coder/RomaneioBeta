@@ -24,7 +24,7 @@ class TranslovatoBrowserMixin:
 
         self._browser = await launch_browser_resilient(
             headless=self.headless,
-            args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+            args=["--disable-blink-features=AutomationControlled"],
         )
         self._context = await self._browser.new_context(
             viewport={"width": 1920, "height": 1080},

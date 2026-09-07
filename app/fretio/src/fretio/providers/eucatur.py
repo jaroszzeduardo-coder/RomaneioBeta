@@ -57,7 +57,7 @@ class EucaturProvider(ProviderBase):
         from fretio.providers.base import launch_browser_resilient
         self._browser = await launch_browser_resilient(
             headless=self.headless,
-            args=['--disable-blink-features=AutomationControlled', '--no-sandbox'],
+            args=['--disable-blink-features=AutomationControlled'],
         )
         self._context = await self._browser.new_context(
             viewport={'width': 1920, 'height': 1080},

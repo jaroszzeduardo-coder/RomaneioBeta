@@ -182,6 +182,61 @@ def test_launch_browser_resilient_connects_via_cdp_without_opening_real_chrome(m
     assert killed == [456]
 
 
+@pytest.mark.parametrize("platform,sandbox_present", [("win32", False), ("linux", True)])
+def test_no_sandbox_only_added_off_windows(monkeypatch, tmp_path, platform, sandbox_present):
+    """--no-sandbox só é injetado fora do Windows; no desktop Windows o sandbox
+    do Chromium fica ativo (CWE-693)."""
+    popen_calls = []
+
+    class FakeProc:
+        pid = 789
+        returncode = None
+
+        def poll(self):
+            return None
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    class FakeChromium:
+        async def connect_over_cdp(self, endpoint):
+            return types.SimpleNamespace(closed=False, close=self._close)
+
+        async def _close(self):
+            return None
+
+    class FakePlaywright:
+        def __init__(self):
+            self.chromium = FakeChromium()
+
+    async def fake_sleep(_delay):
+        return None
+
+    monkeypatch.setattr(launcher, "find_chrome", lambda: "/fake/chrome")
+    monkeypatch.setattr(launcher, "_find_free_port", lambda: 9222)
+    monkeypatch.setattr(launcher.tempfile, "mkdtemp", lambda prefix: str(tmp_path / "profile"))
+    monkeypatch.setattr(launcher.subprocess, "Popen", lambda args, **k: popen_calls.append(args) or FakeProc())
+    monkeypatch.setattr(launcher, "_register_owned_proc", lambda *a, **k: None)
+    monkeypatch.setattr(launcher, "_kill_proc", lambda p: None)
+    monkeypatch.setattr(launcher.socket, "create_connection", lambda *a, **k: FakeConnection())
+    monkeypatch.setattr(launcher.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(launcher.sys, "platform", platform)
+
+    asyncio.run(
+        launcher.launch_browser_resilient(
+            FakePlaywright(),
+            headless=True,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+    )
+    launch_args = popen_calls[0]
+    assert ("--no-sandbox" in launch_args) is sandbox_present
+
+
 def test_providers_base_reexports_browser_helpers():
     import fretio.providers.base as base
 

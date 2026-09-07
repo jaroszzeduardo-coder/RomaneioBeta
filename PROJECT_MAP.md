@@ -34,7 +34,7 @@ Stack principal:
 ## Repositorios relacionados
 
 - `kaianesteffens/RomaneioBeta`: desktop standalone, UI, automacoes locais, providers, updater, instalador e releases.
-- `kaianesteffens/RomaneioBeta-releases`: repositorio legado de releases; mantido apenas como fallback historico de leitura do updater para clientes/builds antigos. Novas releases sao publicadas no proprio `kaianesteffens/RomaneioBeta`.
+- `kaianesteffens/RomaneioBeta-releases`: repositorio legado desativado. O updater le e publica releases exclusivamente no proprio `kaianesteffens/RomaneioBeta` (dependencia do repo de releases removida).
 
 ## Entradas principais
 

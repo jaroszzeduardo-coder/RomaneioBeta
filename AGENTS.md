@@ -73,7 +73,7 @@ Não adicionar comentários que apenas descrevem o que o código já faz.
 ## Responsabilidades entre repositorios
 
 - `RomaneioBeta`: aplicativo desktop standalone, UI, automacoes locais, providers, updater, build Windows e releases. Nao depende de servidor.
-- `RomaneioBeta-releases`: repositorio legado de releases; fallback historico de leitura do updater para builds antigos. Novas releases vao para o proprio `RomaneioBeta`.
+- `RomaneioBeta-releases`: repositorio legado desativado. O updater le e publica releases exclusivamente no proprio `RomaneioBeta` (dependencia do repo de releases removida).
 
 ## Verificacao
 

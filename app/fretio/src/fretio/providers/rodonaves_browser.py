@@ -291,7 +291,9 @@ class RodonavesBrowserMixin:
                 f"--user-data-dir={udd}",
                 "--no-first-run",
                 "--no-default-browser-check",
-                "--no-sandbox",
+                # Sandbox desabilitado só fora do Windows (CI/containers); no desktop
+                # Windows o sandbox do Chromium fica ATIVO (CWE-693).
+                *(["--no-sandbox"] if os.name != "nt" else []),
                 "--disable-blink-features=AutomationControlled",
                 "--disable-gpu",
                 "--disable-software-rasterizer",

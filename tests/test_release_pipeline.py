@@ -45,9 +45,10 @@ def test_updater_collects_repo_aliases_from_config_and_env(monkeypatch, tmp_path
         "owner/legacy",
         "owner/fallback",
     ]
-    # Novas releases vao para o proprio repositorio; o repo legado segue como fallback.
+    # Releases sao publicadas e lidas exclusivamente no repositorio principal;
+    # a dependencia do antigo repo de releases foi removida.
     assert "kaianesteffens/RomaneioBeta" in candidates
-    assert "kaianesteffens/RomaneioBeta-releases" in candidates
+    assert "kaianesteffens/RomaneioBeta-releases" not in candidates
 
 
 def test_updater_tries_repo_aliases_and_prefers_stable_latest_asset(monkeypatch):
