@@ -1155,3 +1155,65 @@ def test_rodonaves_submeter_ignores_auxiliary_cep_lookup_and_clicks_calcular():
     assert page.calculate_locator.clicks >= 1
 
 
+
+
+def test_alfa_login_waits_for_confirmed_credentials(monkeypatch):
+    from fretio.providers.alfa import AlfaProvider
+
+    async def run():
+        provider = AlfaProvider(login="test-user", senha="test-password", headless=False)
+        calls = []
+        submitted = False
+
+        async def noop(*args, **kwargs):
+            pass
+
+        async def evaluate(expression):
+            nonlocal submitted
+            if "var u=document.querySelector" in expression:
+                calls.append(expression)
+                return len(calls) >= 2
+            assert len(calls) >= 2
+            submitted = True
+            return True
+
+        async def logged_in():
+            return True
+
+        monkeypatch.setattr(provider, "_init_browser", noop)
+        monkeypatch.setattr(provider, "_disconnect_playwright", noop)
+        monkeypatch.setattr(provider, "_connect_playwright", noop)
+        monkeypatch.setattr(provider, "_ocultar_janela", noop)
+        monkeypatch.setattr(provider, "_set_taskbar_visible", lambda visible: None)
+        monkeypatch.setattr(provider, "_cdp_eval_raw", evaluate)
+        monkeypatch.setattr(provider, "_is_logged_in", logged_in)
+        monkeypatch.setattr(provider, "_get_page_url_sync", lambda: "https://areadocliente.alfatransportes.com.br/" + ("cotacao/" if submitted else "login/"))
+        monkeypatch.setattr(asyncio, "sleep", noop)
+        assert await provider._login() is True
+        assert len(calls) == 2
+        assert "p.dispatchEvent(new Event('change'" in calls[-1]
+
+    asyncio.run(run())
+
+
+def test_alfa_submit_fallback_stays_inside_quotation_form():
+    from fretio.providers.alfa import AlfaProvider
+
+    async def run():
+        provider = AlfaProvider(login="user", senha="password", headless=False)
+
+        class MissingButton:
+            async def count(self):
+                return 0
+
+        class Page:
+            async def evaluate(self, expression):
+                assert "document.querySelector('#pesoMercadoria')?.closest('form')" in expression
+                assert "form.querySelector(s)" in expression
+                assert "form.querySelectorAll('button')" in expression
+                return True
+
+        provider._page = Page()
+        await provider._do_submit_click(MissingButton())
+
+    asyncio.run(run())

@@ -352,11 +352,6 @@ class AlfaProvider(AlfaBrowserMixin, ProviderBase):
             return False
 
         # ── Não-headless ──
-        # Espera a página carregar (apenas no primeiro launch)
-        chrome_was_running = self._chrome_proc is not None and self._chrome_proc.poll() is None
-        if not chrome_was_running:
-            await asyncio.sleep(2)
-
         # Verifica se já está logado (sessão persistente do user-data-dir)
         current_url = self._get_page_url_sync()
         if current_url and "alfatransportes.com.br" in current_url.lower() and "login" not in current_url.lower():
@@ -370,22 +365,30 @@ class AlfaProvider(AlfaBrowserMixin, ProviderBase):
         # Turnstile necessário: desconecta Playwright
         await self._disconnect_playwright()
 
-        # Preenche login/senha via CDP bruto (sem Playwright = sem detecção)
+        # Aguarda os campos e confirma o preenchimento via CDP direto.
         fill_js = (
             "(function(){"
             f"var u=document.querySelector('#username');"
             f"var p=document.querySelector('#password');"
             f"if(u){{u.value={json.dumps(self.login)};u.dispatchEvent(new Event('input',{{bubbles:true}}));u.dispatchEvent(new Event('change',{{bubbles:true}}));}}"
-            f"if(p){{p.value={json.dumps(self.senha)};p.dispatchEvent(new Event('input',{{bubbles:true}}));u.dispatchEvent(new Event('change',{{bubbles:true}}));}}"
-            "})();"
+            f"if(p){{p.value={json.dumps(self.senha)};p.dispatchEvent(new Event('input',{{bubbles:true}}));p.dispatchEvent(new Event('change',{{bubbles:true}}));}}"
+            f"return !!u && !!p && u.value==={json.dumps(self.login)} && p.value==={json.dumps(self.senha)};}})();"
         )
-        await self._cdp_eval_raw(fill_js)
+        filled = False
+        for _ in range(40):
+            if await self._cdp_eval_raw(fill_js) is True:
+                filled = True
+                break
+            await asyncio.sleep(0.25)
+        if not filled:
+            self.last_error = "Login Alfa: campos de acesso não ficaram disponíveis para preenchimento"
+            return False
         logger.info("[ALFA] Credenciais preenchidas via CDP direto (sem Playwright)")
 
         # Script para submeter quando o botão estiver habilitado pelo Turnstile
         try_submit_js = """(function(){
             var b = document.querySelector('#btn-enviar');
-            if (b && !b.disabled) {
+            if (b && !b.disabled && document.querySelector('#username')?.value && document.querySelector('#password')?.value) {
                 b.click();
                 return true;
             }
@@ -596,11 +599,13 @@ class AlfaProvider(AlfaBrowserMixin, ProviderBase):
                 "button.btn-alfa", "button.btn-primary",
                 "#btnCalcular", "#btn-cotar"
             ];
+            const form = document.querySelector('#pesoMercadoria')?.closest('form');
+            if (!form) return false;
             for (const s of selectors) {
-                const el = document.querySelector(s);
+                const el = form.querySelector(s);
                 if (el) { el.click(); return true; }
             }
-            const buttons = document.querySelectorAll('button');
+            const buttons = form.querySelectorAll('button');
             for (const b of buttons) {
                 const t = (b.textContent || '').toLowerCase();
                 if (t.includes('calcular') || t.includes('cotar') || t.includes('enviar') || t.includes('continuar')) {
@@ -719,7 +724,7 @@ class AlfaProvider(AlfaBrowserMixin, ProviderBase):
                 tipo_pagador=tipo_pagador,
             )
 
-            submit_btn = self._page.locator("button[type='submit']")
+            submit_btn = self._page.locator("form:has(#pesoMercadoria) button[type='submit'], form:has(#pesoMercadoria) input[type='submit']").first
             try:
                 await submit_btn.scroll_into_view_if_needed(timeout=3000)
             except Exception:

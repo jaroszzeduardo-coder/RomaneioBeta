@@ -358,11 +358,10 @@ class AlfaBrowserMixin:
             pass
         return ""
 
-    async def _cdp_eval_raw(self, expression: str) -> None:
+    async def _cdp_eval_raw(self, expression: str):
         """Executa JavaScript via CDP WebSocket direto (sem Playwright).
 
-        Conecta, envia Runtime.evaluate, desconecta imediatamente.
-        Isso NÃO deixa rastros de automação para o Turnstile detectar.
+        Conecta, executa Runtime.evaluate e retorna o resultado confirmado.
         """
         try:
             req = urllib.request.Request(
@@ -408,18 +407,41 @@ class AlfaBrowserMixin:
             msg = json.dumps({
                 "id": 1,
                 "method": "Runtime.evaluate",
-                "params": {"expression": expression},
+                "params": {"expression": expression, "returnByValue": True},
             })
             await self._ws_send_text(writer, msg)
-            await asyncio.sleep(0.3)
-
-            writer.close()
+            value = None
             try:
+                async with asyncio.timeout(5):
+                    while True:
+                        header = await reader.readexactly(2)
+                        opcode = header[0] & 15
+                        length = header[1] & 127
+                        if length == 126:
+                            length = struct.unpack(">H", await reader.readexactly(2))[0]
+                        elif length == 127:
+                            length = struct.unpack(">Q", await reader.readexactly(8))[0]
+                        mask = await reader.readexactly(4) if header[1] & 128 else None
+                        payload = await reader.readexactly(length)
+                        if mask:
+                            payload = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+                        if opcode == 8:
+                            break
+                        if opcode != 1:
+                            continue
+                        reply = json.loads(payload)
+                        if reply.get("id") == 1:
+                            result = reply.get("result", {})
+                            if "error" not in reply and "exceptionDetails" not in result:
+                                value = result.get("result", {}).get("value")
+                            break
+            finally:
+                writer.close()
                 await writer.wait_closed()
-            except Exception:
-                pass
+            return value
+
         except Exception as e:
-            logger.debug(f"[ALFA] CDP eval raw falhou: {e}")
+            logger.debug("[ALFA] CDP eval raw falhou: %s", type(e).__name__)
 
     @staticmethod
     async def _ws_send_text(writer, text: str) -> None:
