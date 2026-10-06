@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 
-_DEFAULT_GITHUB_REPO = "kaianesteffens/RomaneioBeta"
+_DEFAULT_GITHUB_REPO = "jaroszzeduardo-coder/RomaneioBeta"
 
 TODAS_UFS = [
     "AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO", "MA",

@@ -44,6 +44,7 @@ def test_selecionar_cep_destino_prefers_uf_hint_after_reference():
 def test_dados_envio_romaneio_colado_extracts_core_fields():
     dados = _dados_envio_romaneio_colado(_romaneio_valido())
     assert dados["destino_cep"] == "90010123"
+    assert dados["numero_destino"] == "123"
     assert dados["uf_destino"] == "RS"
     assert dados["cidade_destino"] == "Porto Alegre"
     assert dados["cnpj_destinatario"] == "12345678000190"

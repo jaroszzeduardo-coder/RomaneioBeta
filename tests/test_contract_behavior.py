@@ -67,6 +67,7 @@ def test_contract_parse_romaneio_colado_preserves_shipping_payload():
             },
         ],
         "descricoes_itens": ["Produto A", "Produto B"],
+        "numero_destino": "",
     }
 
 

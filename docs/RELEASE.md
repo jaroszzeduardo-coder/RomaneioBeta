@@ -35,7 +35,7 @@ Configuração obrigatória para release oficial de cliente:
 - Variable `UPDATE_PUBLIC_KEY_B64`
 - Variable `ALLOW_UNSIGNED_DEV_RELEASE=false`
 
-As releases são publicadas no próprio repositório `kaianesteffens/RomaneioBeta`
+As releases são publicadas no próprio repositório `jaroszzeduardo-coder/RomaneioBeta`
 (que é público), então o `GITHUB_TOKEN` automático do workflow já basta — **não é
 mais necessário um `RELEASES_TOKEN`**. Só defina `RELEASE_REPO` (e um `RELEASES_TOKEN`
 com acesso a ele) se quiser publicar em um repositório diferente do atual.
@@ -55,9 +55,9 @@ O workflow deve gerar, para a versão informada:
 
 ## Publicação
 
-- Conferir que a GitHub Release `v2.32` existe em `kaianesteffens/RomaneioBeta` e está marcada como `latest`.
+- Conferir que a GitHub Release `v2.32` existe em `jaroszzeduardo-coder/RomaneioBeta` e está marcada como `latest`.
 - Conferir anexos: instalador, ZIP de update, assinatura do ZIP, launcher e aliases `latest`.
-- Conferir que `latest.json`, se versionado/gerado, aponta para `2.32` e para `kaianesteffens/RomaneioBeta`.
+- Conferir que `latest.json`, se versionado/gerado, aponta para `2.32` e para `jaroszzeduardo-coder/RomaneioBeta`.
 
 ## Testes pós-release
 

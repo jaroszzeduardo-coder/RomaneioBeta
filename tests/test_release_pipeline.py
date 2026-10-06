@@ -46,8 +46,8 @@ def test_updater_collects_repo_aliases_from_config_and_env(monkeypatch, tmp_path
         "owner/fallback",
     ]
     # Novas releases vao para o proprio repositorio; o repo legado segue como fallback.
-    assert "kaianesteffens/RomaneioBeta" in candidates
-    assert "kaianesteffens/RomaneioBeta-releases" in candidates
+    assert "jaroszzeduardo-coder/RomaneioBeta" in candidates
+    assert "dujarosz/RomaneioBeta-releases" in candidates
 
 
 def test_updater_tries_repo_aliases_and_prefers_stable_latest_asset(monkeypatch):
@@ -251,7 +251,7 @@ def _setup_launcher_worker(monkeypatch, tmp_path, verify, extracted, launched):
     monkeypatch.setenv("TEMP", str(tmp_path))
     monkeypatch.setattr(launcher, "APP_DIR_CANDIDATES", (app_dir,))
     monkeypatch.setattr(launcher, "_resolve_latest_release",
-                        lambda: ("kaianesteffens/RomaneioBeta", _fake_release_with_sig()))
+                        lambda: ("jaroszzeduardo-coder/RomaneioBeta", _fake_release_with_sig()))
     monkeypatch.setattr(launcher, "_download",
                         lambda url, dest, total, status_cb, progress_cb: dest.write_bytes(b"x"))
     monkeypatch.setattr(launcher, "verify_update_signature", verify)

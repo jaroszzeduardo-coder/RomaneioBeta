@@ -721,27 +721,31 @@ class AGEXProvider(AGEXBrowserMixin, AGEXDiagnosticsMixin, ProviderBase):
                 ).first
                 await dest_cnpj_loc.wait_for(state="visible", timeout=10000)
 
-            await dest_cnpj_loc.click()
-            await dest_cnpj_loc.fill(destinatario)
-            await page.wait_for_timeout(400)
-            await dest_cnpj_loc.press("Tab")
-
-            # Aguardar auto-preenchimento via lookup de CNPJ (até 5s)
+            cep_dest = self._digits(self.cep_destino or "")
             city_autofill = ""
-            for _ in range(20):
-                city_autofill = await page.evaluate(
-                    "() => (document.querySelector('input[name=\"city\"]') || {}).value || ''"
-                )
-                if city_autofill and len(city_autofill) > 1:
-                    break
-                await page.wait_for_timeout(250)
+
+            if destinatario:
+                await dest_cnpj_loc.click()
+                await dest_cnpj_loc.fill(destinatario)
+                await page.wait_for_timeout(400)
+                await dest_cnpj_loc.press("Tab")
+
+                # Aguardar auto-preenchimento via lookup de CNPJ (até 5s)
+                for _ in range(20):
+                    city_autofill = await page.evaluate(
+                        "() => (document.querySelector('input[name=\"city\"]') || {}).value || ''"
+                    )
+                    if city_autofill and len(city_autofill) > 1:
+                        break
+                    await page.wait_for_timeout(250)
+            else:
+                logger.info(f"[{self.nome}] Destinatário sem CNPJ; cotando pelo CEP conforme opção do portal")
 
             if city_autofill:
                 logger.info(f"[{self.nome}] CNPJ lookup preencheu cidade: {city_autofill!r}")
             else:
                 # Lookup não preencheu → tentar via CEP
                 logger.info(f"[{self.nome}] CNPJ lookup sem resultado; tentando CEP")
-                cep_dest = self._digits(self.cep_destino or "")
                 if len(cep_dest) == 8:
                     cep_loc = page.locator('input[name="cep"]').first
                     if await cep_loc.count() > 0 and await cep_loc.is_visible():
@@ -759,23 +763,36 @@ class AGEXProvider(AGEXBrowserMixin, AGEXDiagnosticsMixin, ProviderBase):
                             await page.wait_for_timeout(250)
                         logger.info(f"[{self.nome}] CEP lookup cidade: {city_autofill!r}")
 
-                # Se ainda vazio, preencher manualmente via ViaCEP
-                if not city_autofill and len(cep_dest) == 8:
-                    dados_cep = await self._buscar_cep_viacep(cep_dest)
-                    if dados_cep:
-                        campos = [
-                            ("city",         dados_cep.get("localidade", "")),
-                            ("state",        dados_cep.get("uf", "")),
-                            ("neighborhood", dados_cep.get("bairro", "") or "Centro"),
-                            ("address",      dados_cep.get("logradouro", "") or "S/N"),
-                        ]
-                        for name_attr, val in campos:
-                            if not val:
-                                continue
-                            await self._set_react_input(page, f'input[name="{name_attr}"]', val)
-                            await page.wait_for_timeout(80)
-                        logger.info(f"[{self.nome}] Endereço preenchido via ViaCEP: "
-                                    f"{dados_cep.get('localidade')}/{dados_cep.get('uf')}")
+            # O lookup do CNPJ pode trazer o endereço cadastrado do destinatário,
+            # inclusive um CEP diferente do romaneio. O portal cota pelo endereço
+            # de entrega informado, então o CEP do romaneio deve prevalecer.
+            if len(cep_dest) == 8:
+                cep_loc = page.locator('input[name="cep"]').first
+                cep_atual = self._digits(await cep_loc.input_value()) if await cep_loc.count() else ""
+                if cep_atual != cep_dest:
+                    await cep_loc.fill(cep_dest)
+                    await cep_loc.press("Tab")
+                    await page.wait_for_timeout(800)
+
+            # O portal atual exige todos os campos do endereço, inclusive número.
+            # O lookup de CNPJ pode preencher apenas parte deles; completa somente
+            # os que permaneceram vazios com os dados do CEP.
+            dados_cep = await self._buscar_cep_viacep(cep_dest) if len(cep_dest) == 8 else {}
+            campos_destino = [
+                ("city", dados_cep.get("localidade", "") if dados_cep else ""),
+                ("state", dados_cep.get("uf", "") if dados_cep else ""),
+                ("neighborhood", (dados_cep.get("bairro", "") if dados_cep else "") or "Centro"),
+                ("address", (dados_cep.get("logradouro", "") if dados_cep else "") or "S/N"),
+                ("number", "1"),
+            ]
+            for name_attr, fallback in campos_destino:
+                loc = page.locator(f'input[name="{name_attr}"]').first
+                if await loc.count() == 0:
+                    continue
+                atual = (await loc.input_value()).strip()
+                if not atual and fallback:
+                    await self._set_react_input(page, f'input[name="{name_attr}"]', fallback)
+                    await page.wait_for_timeout(80)
 
             await self._fechar_popups()
             if not await self._clicar_botao_fluxo(page, ("Próximo", "Proximo", "Continuar")):
@@ -802,7 +819,7 @@ class AGEXProvider(AGEXBrowserMixin, AGEXDiagnosticsMixin, ProviderBase):
             # Preencher valor NF — campo pode ter máscara de moeda, usar keyboard.type
             await nf_loc.click()
             await nf_loc.fill("")
-            await page.keyboard.type(str(int(round(valor))), delay=30)
+            await page.keyboard.type(str(int(round(float(valor) * 100))), delay=30)
             await nf_loc.press("Tab")
             await page.wait_for_timeout(200)
 
@@ -959,11 +976,6 @@ class AGEXProvider(AGEXBrowserMixin, AGEXDiagnosticsMixin, ProviderBase):
                     await page.wait_for_timeout(1500)
                     continue
 
-            if "/cotacao/resultado/" in current_url:
-                redirect_detected = True
-                result_body = body_text
-                break
-
             for phrase in [
                 "não atend", "nao atend", "fora da área", "fora de cobertura",
                 "cep não atendido", "cep nao atendido", "não atendemos",
@@ -973,6 +985,21 @@ class AGEXProvider(AGEXBrowserMixin, AGEXDiagnosticsMixin, ProviderBase):
                     logger.info(f"[{self.nome}] {self.last_error}")
                     await self._salvar_debug("indisponivel")
                     return None
+
+            if (
+                "cnpj remetente" in body_lower
+                and "cnpj do destinat" in body_lower
+                and "diferente" in body_lower
+            ):
+                self.last_error = "AGEX exige CNPJ de destinatário diferente do remetente ou cotação sem CNPJ"
+                logger.info(f"[{self.nome}] {self.last_error}")
+                await self._salvar_debug("cnpj_destinatario_igual_remetente")
+                return None
+
+            if "/cotacao/resultado/" in current_url:
+                redirect_detected = True
+                result_body = body_text
+                break
 
             valor_body = self._extrair_valor_frete_do_texto(body_text)
             previsao_body = self._extrair_previsao_do_texto(body_text)
@@ -994,7 +1021,7 @@ class AGEXProvider(AGEXBrowserMixin, AGEXDiagnosticsMixin, ProviderBase):
         # Extrair número da cotação direto da URL: /cotacao/resultado/2197136
         url = page.url or ""
         numero = ""
-        m_url = re.search(r"/cotacao/resultado/(\d+)", url)
+        m_url = re.search(r"/cotacao/resultado/(\d+)(?:[/?#]|$)", url)
         if m_url:
             numero = m_url.group(1)
         if not numero and result_body:
@@ -1020,17 +1047,7 @@ class AGEXProvider(AGEXBrowserMixin, AGEXDiagnosticsMixin, ProviderBase):
         logger.info(f"[{self.nome}] Dados extraídos: {result_data}")
 
         # Parsear valor do frete
-        valor_frete = None
-        if result_data and result_data.get("frete"):
-            try:
-                valor_frete = self._parse_brl(
-                    result_data["frete"].replace("R$", "").strip()
-                )
-            except Exception:
-                pass
-
-        if valor_frete is None:
-            valor_frete = self._extrair_valor_frete_do_texto(result_body or await page.inner_text("body"))
+        valor_frete = self._extrair_valor_frete_do_texto(result_body)
 
         if valor_frete is None:
             self.last_error = "Valor do frete não encontrado na página de resultado"
@@ -1065,8 +1082,8 @@ class AGEXProvider(AGEXBrowserMixin, AGEXDiagnosticsMixin, ProviderBase):
             self._passo_atual = "init_browser"
             await self._init_browser()
 
-            if not self.cnpj_destinatario and not destino:
-                self.last_error = "CNPJ/CPF do destinatário não informado"
+            if not self.cnpj_destinatario and not self.cep_destino:
+                self.last_error = "CNPJ/CPF ou CEP do destinatário não informado"
                 logger.error(f"[{self.nome}] {self.last_error}")
                 return None
 

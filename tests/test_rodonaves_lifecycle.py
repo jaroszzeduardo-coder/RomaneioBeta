@@ -944,22 +944,22 @@ def test_rodonaves_ignores_legacy_ssw_cotacao_url():
     )
 
     assert provider.quotation_url == RodonavesProvider.PORTAL_URL
-    assert provider.portal_entry_url == f"{RodonavesProvider.BASE_URL}/?showLogin=true"
+    assert provider.portal_entry_url == RodonavesProvider.LOGIN_URL
 
 
 def test_rodonaves_honors_modern_portal_override():
-    """URLs válidas do portal cliente.rte.com.br continuam respeitadas."""
+    """URLs válidas do portal rodonaves.com.br continuam respeitadas."""
     provider = RodonavesProvider(
         dominio="RTE",
         usuario="12345678000190",
         senha="senha_teste",
         cnpj_pagador="12345678000190",
-        cotacao_url="https://cliente.rte.com.br/Quotation/Nova",
-        login_url="https://cliente.rte.com.br/Account/Login",
+        cotacao_url="https://rodonaves.com.br/cotacao/nova",
+        login_url="https://rodonaves.com.br/portaldocliente/acesso",
     )
 
-    assert provider.quotation_url == "https://cliente.rte.com.br/Quotation/Nova"
-    assert provider.portal_entry_url == "https://cliente.rte.com.br/Account/Login"
+    assert provider.quotation_url == "https://rodonaves.com.br/cotacao/nova"
+    assert provider.portal_entry_url == "https://rodonaves.com.br/portaldocliente/acesso"
 
 
 def test_rodonaves_uses_defaults_when_urls_empty():
@@ -971,4 +971,4 @@ def test_rodonaves_uses_defaults_when_urls_empty():
     )
 
     assert provider.quotation_url == RodonavesProvider.PORTAL_URL
-    assert provider.portal_entry_url == f"{RodonavesProvider.BASE_URL}/?showLogin=true"
+    assert provider.portal_entry_url == RodonavesProvider.LOGIN_URL

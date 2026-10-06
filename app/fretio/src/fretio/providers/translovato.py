@@ -23,10 +23,8 @@ class TranslovatoProvider(TranslovatoBrowserMixin, ProviderBase):
     """Provider Translovato com cotação automatizada via Playwright."""
 
     BASE_URL = "https://www.translovato.com.br"
-    LOGIN_URL = "https://www.translovato.com.br/fale-conosco/solicitacao-de-cotacao"
-    DEFAULT_COTACAO_URL = (
-        "https://www.translovato.com.br/fale-conosco/solicitacao-de-cotacao#portal-do-cliente"
-    )
+    LOGIN_URL = "https://www.translovato.com.br/fale-conosco/solicitacao-de-cotacao#portal-do-cliente"
+    DEFAULT_COTACAO_URL = "https://www.translovato.com.br/fale-conosco/solicitacao-de-cotacao"
     MINHAS_COTACOES_URL = "https://www.translovato.com.br/portal-do-cliente/minhas-cotacoes"
 
     LOGIN_CNPJ_SELECTOR = "#cnpj"
@@ -83,6 +81,10 @@ class TranslovatoProvider(TranslovatoBrowserMixin, ProviderBase):
         self.cnpj_remetente = _digits(cnpj_remetente)
         self.produto = str(produto or "CONFECCAO").strip() or "CONFECCAO"
         self.cotacao_url = str(cotacao_url or self.DEFAULT_COTACAO_URL).strip()
+        if self.cotacao_url.rstrip("/").endswith(
+            "/fale-conosco/solicitacao-de-cotacao#portal-do-cliente"
+        ):
+            self.cotacao_url = self.DEFAULT_COTACAO_URL
         self.headless = bool(headless)
         self.last_error: str | None = None
         self._passo_atual: str | None = None
@@ -368,22 +370,64 @@ class TranslovatoProvider(TranslovatoBrowserMixin, ProviderBase):
 
         await page.goto(self.LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
         await self._aceitar_cookies()
-        await page.goto(self.cotacao_url, wait_until="domcontentloaded", timeout=60000)
-        await self._aceitar_cookies()
 
-        await page.locator(self.LOGIN_CNPJ_SELECTOR).fill(self._format_cnpj(self.cnpj))
-        await page.locator(self.LOGIN_USER_SELECTOR).fill(self.usuario)
-        await page.locator(self.LOGIN_PASSWORD_SELECTOR).fill(self.senha)
-        await page.evaluate(
-            """() => {
-                const buttons = Array.from(document.querySelectorAll('button'));
-                const button = buttons.find((el) => (el.innerText || '').toLowerCase().includes('entrar'));
-                if (!button) throw new Error('botao entrar nao encontrado');
-                button.click();
-            }"""
-        )
-        if not await self._wait_for_logged_in_state(timeout_ms=12000):
-            self.last_error = "Login falhou ou portal não confirmou acesso"
+        form = page.locator("#login-portal")
+        document = form.locator(self.LOGIN_CNPJ_SELECTOR)
+        await document.fill("")
+        await document.press_sequentially(_digits(self.cnpj), delay=50)
+        await document.press("Tab")
+        await form.locator(self.LOGIN_USER_SELECTOR).fill(self.usuario)
+        await form.locator(self.LOGIN_PASSWORD_SELECTOR).fill(self.senha)
+        await form.locator(self.LOGIN_PASSWORD_SELECTOR).press("Tab")
+        login_response: dict[str, Any] = {}
+
+        async def capture_login_response(response) -> None:
+            try:
+                response_url = response.url.lower()
+                if not any(
+                    path in response_url
+                    for path in ("/portal/comum/login", "/portal-do-cliente/login")
+                ):
+                    return
+                login_response["status_code"] = int(response.status)
+                if "json" in response.headers.get("content-type", "").lower():
+                    payload = await response.json()
+                    if isinstance(payload, dict):
+                        login_response["payload"] = payload
+            except Exception:
+                pass
+
+        response_handler = lambda response: asyncio.ensure_future(capture_login_response(response))
+        page.on("response", response_handler)
+        try:
+            button = page.locator("#login-portal").get_by_role("button", name=re.compile("entrar", re.I))
+            await button.click()
+            logged_in = await self._wait_for_logged_in_state(timeout_ms=3000)
+            payload = login_response.get("payload")
+            if not logged_in and isinstance(payload, dict) and payload.get("status") is True:
+                logged_in = await self._wait_for_logged_in_state(timeout_ms=12000)
+            if not logged_in and await button.is_visible():
+                try:
+                    await button.click(timeout=3000)
+                except PlaywrightTimeoutError:
+                    if not await self._wait_for_logged_in_state(timeout_ms=12000):
+                        raise
+                logged_in = await self._wait_for_logged_in_state(timeout_ms=12000)
+        finally:
+            page.remove_listener("response", response_handler)
+
+        if not logged_in:
+            payload = login_response.get("payload")
+            message = ""
+            if isinstance(payload, dict):
+                for key in ("message", "mensagem", "error", "erro", "title"):
+                    value = payload.get(key)
+                    if isinstance(value, str) and value.strip():
+                        message = value.strip()
+                        break
+            status_code = login_response.get("status_code")
+            suffix = f" (HTTP {status_code})" if status_code else ""
+            self.last_error = (message or "Login falhou ou portal não confirmou acesso") + suffix
             logger.warning("[TRANSLOVATO] %s", self.last_error)
             return False
 
@@ -414,6 +458,16 @@ class TranslovatoProvider(TranslovatoBrowserMixin, ProviderBase):
     async def _fill_input(self, selector: str, value: str, *, index: int = 0, timeout: int = 12000) -> None:
         loc = self._page.locator(selector).nth(index)
         await loc.wait_for(state="visible", timeout=timeout)
+        if selector == self.DELIVERY_ZIP_SELECTOR:
+            await loc.click()
+            try:
+                await self._page.wait_for_load_state("networkidle", timeout=5000)
+            except PlaywrightTimeoutError:
+                pass
+            await loc.fill("")
+            await loc.press_sequentially(_digits(value), delay=40)
+            await loc.press("Tab")
+            return
         await loc.fill(str(value))
         await loc.dispatch_event("input")
         await loc.dispatch_event("change")
@@ -674,12 +728,7 @@ class TranslovatoProvider(TranslovatoBrowserMixin, ProviderBase):
                 self._mask_doc(expected_receiver),
             )
         elif expected_cep and detected_zip != expected_cep:
-            logger.warning(
-                "[TRANSLOVATO] CEP automático do portal diverge do romaneio; seguindo porque CNPJ final está correto. esperado=%s detectado=%s CNPJ=%s",
-                f"{expected_cep[:5]}-***" if len(expected_cep) == 8 else "?",
-                f"{detected_zip[:5]}-***" if len(detected_zip) == 8 else "?",
-                self._mask_doc(expected_receiver),
-            )
+            raise ValueError("CEP de entrega diverge do romaneio; cotacao bloqueada")
         if not detected_city and not detected_uf:
             logger.warning(
                 "[TRANSLOVATO] Cidade/UF do destino não detectadas com segurança; seguindo com endereço automático do portal. CNPJ=%s",
@@ -855,6 +904,16 @@ class TranslovatoProvider(TranslovatoBrowserMixin, ProviderBase):
         )
         await self._fill_input(self.SENDER_CNPJ_SELECTOR, sender)
         await self._preencher_cnpj_destinatario(receiver)
+        try:
+            await self._page.wait_for_load_state("networkidle", timeout=5000)
+        except PlaywrightTimeoutError:
+            pass
+        if _digits(destino):
+            await self._fill_input(self.DELIVERY_ZIP_SELECTOR, _digits(destino))
+            try:
+                await self._page.wait_for_load_state("networkidle", timeout=5000)
+            except PlaywrightTimeoutError:
+                pass
         await self._aguardar_e_validar_autopreenchimento_destino(
             expected_receiver=receiver,
             expected_cep=_digits(destino),

@@ -235,6 +235,10 @@ def _dados_envio_romaneio_colado(romaneio_colado: str) -> dict[str, Any]:
         if c * l * a > comprimento_cm * largura_cm * altura_cm:
             comprimento_cm, largura_cm, altura_cm = c, l, a
 
+    numero_endereco = re.search(
+        r"(?im)^\s*(?:Endere[çc]o\s*:\s*)?(?:Rua|Avenida|Av\.?|Travessa|Alameda|Rodovia|Estrada)\s+[^\n]+?,\s*(\d+[A-Za-z]?)\b",
+        texto,
+    )
     descricoes_itens = []
     for m_desc in re.finditer(r"(?im)^\s*(\S+.*?):\s*\d+\s*und\b", texto):
         descricoes_itens.append(m_desc.group(1).strip())
@@ -253,6 +257,7 @@ def _dados_envio_romaneio_colado(romaneio_colado: str) -> dict[str, Any]:
         "altura_cm": altura_cm,
         "cubagens": cubagens,
         "descricoes_itens": descricoes_itens,
+        "numero_destino": numero_endereco.group(1) if numero_endereco else "",
     }
 
 

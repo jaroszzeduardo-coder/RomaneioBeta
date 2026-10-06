@@ -40,10 +40,11 @@ _STEALTH_JS = get_stealth_script()
 
 
 class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, ProviderBase):
-    """Provider Rodonaves via portal cliente.rte.com.br (seletores gravados)."""
+    """Provider Rodonaves via portal do cliente oficial."""
 
-    PORTAL_URL = "https://cliente.rte.com.br/Quotation"
-    BASE_URL = "https://cliente.rte.com.br"
+    BASE_URL = "https://rodonaves.com.br"
+    LOGIN_URL = "https://rodonaves.com.br/portaldocliente"
+    PORTAL_URL = "https://rodonaves.com.br/cotacao"
     CAPTCHA_MAX_WAIT_S = 45
     _digits = staticmethod(_digits)
 
@@ -51,7 +52,7 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
     def portal_entry_url(self) -> str:
         if self.login_url and not self._is_legacy_portal_url(self.login_url):
             return self.login_url
-        return f"{self.BASE_URL}/?showLogin=true"
+        return self.LOGIN_URL
 
     @property
     def quotation_url(self) -> str:
@@ -61,18 +62,21 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
 
     @staticmethod
     def _is_legacy_portal_url(url: str) -> bool:
-        """Detecta URLs do sistema legado SSW (sistema.rte.com.br/bin/ssw...).
+        """Detecta URLs dos portais RTE/SSW substituídos pelo portal Rodonaves.
 
-        O fluxo atual usa o portal cliente.rte.com.br (login AJAX + formulário
-        próprio). Configurações antigas de clientes ainda apontam ``cotacao_url``
-        para o SSW legado, cujo host não resolve mais (ERR_NAME_NOT_RESOLVED) e é
-        incompatível com este provider. Nesses casos ignoramos a URL configurada
-        e voltamos para os defaults do portal moderno.
+        Configurações antigas ainda podem apontar para ``cliente.rte.com.br`` ou
+        ``sistema.rte.com.br``. Ambos agora redirecionam ou falham e não são o
+        caminho canônico de cotação do portal atual.
         """
         u = str(url or "").strip().lower()
         if not u:
             return False
-        return "sistema.rte.com.br" in u or "ssw" in u
+        return (
+            "cliente.rte.com.br" in u
+            or "sistema.rte.com.br" in u
+            or "/quotation" in u
+            or "ssw" in u
+        )
 
     def __init__(
         self,
@@ -238,7 +242,15 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
             receiver_visible = await self._locator_looks_ready(page, "#ReceiverTaxId")
             destination_visible = await self._locator_looks_ready(page, "#destinationZipCode")
             calculate_visible = await self._locator_looks_ready(page, "#calculateQuotationBtn")
-            if calculate_visible and (receiver_visible or destination_visible):
+            modern_destination_visible = await self._locator_looks_ready(
+                page, "label:has-text('CEP de destino') + input"
+            )
+            modern_calculate_visible = await self._locator_looks_ready(
+                page, "button:has-text('Cotar frete')"
+            )
+            if (
+                calculate_visible and (receiver_visible or destination_visible)
+            ) or (modern_destination_visible and modern_calculate_visible):
                 logger.info(f"[{self.nome}] {success_message}")
                 return True
             if time.monotonic() >= deadline:
@@ -278,7 +290,11 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
         return False
 
     async def _has_login_prompt(self, page: Any) -> bool:
-        return await self._locator_looks_ready(page, "#cpfcnp")
+        if await self._locator_looks_ready(page, "#cpfcnp"):
+            return True
+        return await self._locator_looks_ready(
+            page, "button:has-text('Login'), button:has-text('Entrar')"
+        )
 
     async def _open_portal_entrypoint(self):
         target_url = self.portal_entry_url
@@ -335,11 +351,21 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
         login_doc = self._digits(self.usuario) or self._digits(self.dominio) or self.cnpj_pagador
         logger.info(f"[{self.nome}] Preenchendo login com doc={login_doc[:4]}***{login_doc[-2:]}")
 
-        # Se o modal de login não estiver aberto, tenta abrir
+        # Se o modal de login não estiver aberto, tenta abrir. O portal Angular
+        # atual usa um botão "Login"/"Entrar" e inputs sem IDs; o portal antigo
+        # continua coberto pelos seletores por ID abaixo.
         try:
-            cpfcnp_locator = page.locator('#cpfcnp')
-            if not await cpfcnp_locator.is_visible(timeout=1000):
-                for btn_sel in ("a[href*='showLogin']", "a[data-target='#loginModal']", "#btn-login", "a:has-text('Entrar')", "button:has-text('Entrar')"):
+            legacy_doc = page.locator('#cpfcnp')
+            modern_password = page.locator("input[type='password']:visible")
+            if not await legacy_doc.is_visible(timeout=1000) and not await modern_password.count():
+                for btn_sel in (
+                    "button:has-text('Login')",
+                    "button:has-text('Entrar')",
+                    "a[href*='showLogin']",
+                    "a[data-target='#loginModal']",
+                    "#btn-login",
+                    "a:has-text('Entrar')",
+                ):
                     try:
                         el = page.locator(btn_sel).first
                         if await el.is_visible(timeout=500):
@@ -351,16 +377,44 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
         except Exception:
             pass
 
-        # Aguarda campo de login
-        cpfcnp_el = page.locator('#cpfcnp')
-        await cpfcnp_el.wait_for(state="visible", timeout=10000)
-        await cpfcnp_el.fill(login_doc)
+        # Aguarda campo de login e escolhe o conjunto de seletores do portal.
+        legacy_doc = page.locator('#cpfcnp')
+        modern_pwd_locator = page.locator("input[type='password']:visible")
+        modern_pwd = getattr(modern_pwd_locator, "first", modern_pwd_locator)
+        try:
+            legacy_visible = await legacy_doc.is_visible(timeout=500)
+        except Exception:
+            legacy_visible = False
+        if legacy_visible:
+            modern_login = False
+        else:
+            try:
+                await modern_pwd.wait_for(state="visible", timeout=3000)
+                modern_login = True
+            except Exception:
+                modern_login = False
 
-        pwd_el = page.locator('#passwordToLogin')
+        if modern_login:
+            cpfcnp_el = page.locator(
+                "label:has-text('CPF/CNPJ') + input:visible, "
+                "label:has-text('CPF/CNPJ') + div input:visible"
+            ).first
+            if not await cpfcnp_el.count():
+                cpfcnp_el = page.locator(
+                    "input:visible:not([type='password']):not([type='hidden'])"
+                ).last
+            pwd_el = modern_pwd
+        else:
+            cpfcnp_el = legacy_doc
+            await cpfcnp_el.wait_for(state="visible", timeout=10000)
+            pwd_el = page.locator('#passwordToLogin')
+
+        await cpfcnp_el.fill(login_doc)
         await pwd_el.fill(self.senha)
 
         # Atualiza bindings do formulário via JS
-        await page.evaluate("""({doc, pwd}) => {
+        if not modern_login:
+            await page.evaluate("""({doc, pwd}) => {
             const elDoc = document.getElementById('cpfcnp');
             if (elDoc) {
                 elDoc.value = doc;
@@ -374,7 +428,7 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
                 elPwd.dispatchEvent(new Event('input', {bubbles: true}));
                 elPwd.dispatchEvent(new Event('change', {bubbles: true}));
             }
-        }""", {"doc": login_doc, "pwd": self.senha})
+            }""", {"doc": login_doc, "pwd": self.senha})
 
         # Aceita termos LGPD se houver checkbox
         try:
@@ -404,7 +458,11 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
 
         try:
             # Clica no botão Entrar para que o script nativo (crypto-jwe.js) processe
-            submit_btn = page.locator('#loginSubmit')
+            submit_btn = (
+                page.locator("button:has-text('Entrar'):visible").last
+                if modern_login
+                else page.locator('#loginSubmit')
+            )
             await submit_btn.click()
 
             # Aguarda resposta da API, mensagens de erro ou navegação
@@ -414,6 +472,10 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
                 if "json" in login_response_data:
                     res = login_response_data["json"]
                     if isinstance(res, dict):
+                        if res.get("ok") is False:
+                            err = res.get("message") or res.get("error") or "Credenciais inválidas ou erro no portal"
+                            self._mark_login_failed()
+                            raise RuntimeError(f"Login Rodonaves falhou — {err}")
                         if res.get("Success") is False:
                             err = res.get("ErrorMessage") or res.get("WarningMessage") or "Credenciais inválidas ou erro no portal"
                             self._mark_login_failed()
@@ -421,6 +483,14 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
                         elif res.get("Success") is True:
                             logger.info(f"[{self.nome}] Resposta de login confirmada com sucesso")
                             break
+
+                if modern_login:
+                    authenticated = await page.evaluate(
+                        "() => Boolean(sessionStorage.getItem('rodonaves.auth.session'))"
+                    )
+                    if authenticated:
+                        logger.info(f"[{self.nome}] Sessão do portal atual confirmada")
+                        break
 
                 erro_msg = await page.evaluate('''() => {
                     const toast = document.querySelector('.toast-message');
@@ -455,6 +525,13 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
             page.remove_listener("response", resp_handler)
 
         await page.wait_for_timeout(800)
+        if modern_login:
+            authenticated = await page.evaluate(
+                "() => Boolean(sessionStorage.getItem('rodonaves.auth.session'))"
+            )
+            if not authenticated:
+                self._mark_login_failed()
+                raise RuntimeError("Login Rodonaves não criou uma sessão autenticada")
         self._set_login_status("login_ok", True)
 
     async def _go_to_quotation_after_login(self):
@@ -834,8 +911,21 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
         cep_destino: str,
         cep_origem: str = "",
         peso: float = 0.0,
+        numero_destino: str = "",
     ) -> None:
         page = self._page
+
+        if await page.locator("#senderTaxId").count() > 0:
+            await self._preencher_cotacao_portal_atual(
+                valor=valor,
+                cubagens=cubagens,
+                cnpj_destinatario=cnpj_destinatario,
+                cep_destino=cep_destino,
+                cep_origem=cep_origem,
+                peso=peso,
+                numero_destino=numero_destino,
+            )
+            return
 
         # Remove overlays que interceptam cliques (cookie banner, navbar fixa, modais,
         # e elementos com position:fixed/absolute via CSS — não só inline style)
@@ -1069,9 +1159,92 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
         except Exception:
             pass
 
+    async def _preencher_cotacao_portal_atual(
+        self,
+        *,
+        valor: float,
+        cubagens: list[dict],
+        cnpj_destinatario: str,
+        cep_destino: str,
+        cep_origem: str,
+        peso: float,
+        numero_destino: str = "",
+    ) -> None:
+        """Preenche o formulário Angular atual de ``rodonaves.com.br/cotacao``."""
+        page = self._page
+
+        await page.get_by_placeholder(
+            "Nome de quem pode ser contatado sobre esta cotação"
+        ).fill("DARLU IND")
+        await page.get_by_placeholder("(41) 99999-9999").fill("54999999999")
+
+        sender = page.locator("#senderTaxId")
+        if not (await sender.input_value()).strip():
+            await sender.fill(self._format_cnpj(self.cnpj_pagador or self.usuario))
+
+        if cep_origem:
+            await page.locator("#originZipCode").fill(self._format_cep(cep_origem))
+            await page.locator("#originZipCode").press("Tab")
+            await page.wait_for_timeout(600)
+
+        await page.locator("#recipientTaxId").fill(self._format_cnpj(cnpj_destinatario))
+        await page.locator("#recipientTaxId").press("Tab")
+        await page.wait_for_timeout(600)
+        await page.locator("#destinationZipCode").fill(self._format_cep(cep_destino))
+        await page.locator("#destinationZipCode").press("Tab")
+        await page.wait_for_timeout(800)
+
+        if numero_destino:
+            await page.locator("#destinationNumber").fill(str(numero_destino))
+            await page.locator("#destinationNumber").press("Tab")
+        elif not (await page.locator("#destinationNumber").input_value()).strip():
+            raise RuntimeError("Informe o número do endereço de destino no romaneio para cotar na Rodonaves")
+
+        invoice = page.locator("label:has-text('Valor total NF') input").first
+        await invoice.fill(str(int(round(float(valor) * 100))))
+
+        for _ in cubagens[1:]:
+            await page.get_by_role("button", name="Novo grupo de volumes").click()
+
+        count_fields = page.locator("label:has-text('Total de volumes') input")
+        weight_fields = page.locator("label:has-text('Peso total (kg)') input")
+        for idx, cubagem in enumerate(cubagens):
+            quantidade = int(cubagem["quantidade"])
+            peso_unitario = float(cubagem.get("peso_por_volume_kg") or 0)
+            peso_grupo = peso_unitario * quantidade
+            if peso_grupo <= 0:
+                peso_grupo = float(peso) / max(1, len(cubagens))
+            await count_fields.nth(idx).fill(str(quantidade))
+            await weight_fields.nth(idx).fill(f"{peso_grupo:g}")
+
+        dimension_toggle = page.get_by_text("Informar", exact=True).first.locator("..").locator("button")
+        await dimension_toggle.click()
+        await page.wait_for_timeout(300)
+
+        height_fields = page.locator("label:has-text('Altura (cm)') input")
+        width_fields = page.locator("label:has-text('Largura (cm)') input")
+        length_fields = page.locator("label:has-text('Comprimento (cm)') input")
+        for idx, cubagem in enumerate(cubagens):
+            await height_fields.nth(idx).fill(str(int(cubagem["altura_cm"])))
+            await width_fields.nth(idx).fill(str(int(cubagem["largura_cm"])))
+            await length_fields.nth(idx).fill(str(int(cubagem["comprimento_cm"])))
+
+        package_section = page.get_by_text("Tipo de embalagem", exact=False).first
+        try:
+            package_buttons = package_section.locator("xpath=following-sibling::div[1]//button")
+            if await package_buttons.count() > 0:
+                await package_buttons.first.click()
+        except Exception:
+            logger.warning(f"[{self.nome}] Tipo de embalagem será validado pelo portal")
+
+        await page.wait_for_timeout(500)
+
     async def _click_calcular_via_js(self, page) -> bool:
         return bool(await page.evaluate("""() => {
-            const el = document.getElementById('calculateQuotationBtn');
+            const el = document.getElementById('calculateQuotationBtn') ||
+                Array.from(document.querySelectorAll('button')).find(
+                    button => button.textContent && button.textContent.trim().includes('Cotar frete')
+                );
             if (!el) return false;
             el.click();
             return true;
@@ -1099,7 +1272,7 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
             )):
                 return False
             return any(kw in lowered for kw in (
-                "/calculate", "/simulate", "/simular", "/cotacao", "/cotar",
+                "/calculate", "/simulate", "/quotations/create", "/simular", "/cotacao", "/cotar",
                 "/calcular", "/getquotation", "/quotation/calculate",
                 "/quotation/simulate", "/quotation/cotacao"
             ))
@@ -1164,11 +1337,22 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
             async with self._janela_visivel_para_captcha() as janela_visivel:
                 await page.wait_for_timeout(300)
                 try:
-                    await page.locator("#calculateQuotationBtn").scroll_into_view_if_needed()
+                    modern_portal = (
+                        hasattr(page, "get_by_role")
+                        and await page.locator("#senderTaxId").count() > 0
+                    )
+                    submit_locator = (
+                        page.get_by_role("button", name="Cotar frete", exact=True)
+                        if modern_portal
+                        else page.locator("#calculateQuotationBtn")
+                    )
+                    await submit_locator.scroll_into_view_if_needed(timeout=3000)
                     await page.wait_for_timeout(300)
                 except Exception:
                     pass
-                if janela_visivel:
+                if self._effective_headless:
+                    logger.debug(f"[{self.nome}] Fluxo headless; janela de CAPTCHA desnecessária")
+                elif janela_visivel:
                     logger.info(f"[{self.nome}] Janela compacta visível para CAPTCHA")
                 else:
                     logger.warning(f"[{self.nome}] Não foi possível tornar a janela visível para o CAPTCHA")
@@ -1221,8 +1405,10 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
                     if api_result and "text" in api_result:
                         return True
                     try:
-                        detected = await page.evaluate("""() => {
+                        detected = await page.evaluate(r"""() => {
                             if (document.querySelectorAll('td.col-result, .col-result').length > 0) return true;
+                            const bodyText = document.body ? document.body.innerText : '';
+                            if (bodyText.includes('Prazo: até') && /R\$\s*[\d.]+,\d{2}/.test(bodyText)) return true;
                             const qr = document.getElementById('quotationResult') || document.querySelector('[id*="quotationResult" i], [id*="Result" i]');
                             if (qr && qr.innerText && qr.innerText.trim().length > 30) {
                                 const t = qr.innerText.toLowerCase();
@@ -1272,10 +1458,10 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
                 try:
                     form_state = await page.evaluate("""() => {
                         const fields = {};
-                        const ids = ['contactName', 'ReceiverTaxId', 'destinationZipCode', 'destinationNumber'];
+                        const ids = ['contactName', 'ReceiverTaxId', 'senderTaxId', 'recipientTaxId', 'originZipCode', 'destinationZipCode', 'destinationNumber'];
                         for (const id of ids) {
                             const el = document.getElementById(id);
-                            fields[id] = el ? el.value : '(not found)';
+                            fields[id] = el ? {present: true, filled: Boolean(String(el.value || '').trim())} : {present: false};
                         }
                         const cap = document.querySelector('textarea[name="g-recaptcha-response"]');
                         fields['captcha_token_len'] = cap && cap.value ? cap.value.length : 0;
@@ -1285,7 +1471,15 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
                 except Exception as e:
                     logger.warning(f"[{self.nome}] Não foi possível logar estado do formulário: {e}")
 
-                calc_btn = page.locator("#calculateQuotationBtn")
+                modern_portal = (
+                    hasattr(page, "get_by_role")
+                    and await page.locator("#senderTaxId").count() > 0
+                )
+                calc_btn = (
+                    page.get_by_role("button", name="Cotar frete", exact=True)
+                    if modern_portal
+                    else page.locator("#calculateQuotationBtn")
+                )
                 if not manual_submit_detected:
                     click_succeeded = False
                     try:
@@ -1334,8 +1528,10 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
                     logger.info(f"[{self.nome}] Resultado capturado via texto API ({api_result.get('url', '?')})")
                     break
                 try:
-                    has_result = await page.evaluate("""() => {
+                    has_result = await page.evaluate(r"""() => {
                         if (document.querySelectorAll('td.col-result, .col-result').length > 0) return 'col-result';
+                        const bodyText = document.body ? document.body.innerText : '';
+                        if (bodyText.includes('Prazo: até') && /R\$\s*[\d.]+,\d{2}/.test(bodyText)) return 'portal-atual';
                         const qr = document.getElementById('quotationResult') || document.querySelector('[id*="quotationResult" i], [id*="Result" i]');
                         if (qr && qr.innerText && qr.innerText.trim().length > 30) {
                             const t = qr.innerText.toLowerCase();
@@ -1527,7 +1723,7 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
                 transportadora=self.nome,
                 prazo_dias=prazo_dias,
                 valor_frete=round(float(valor_frete), 2),
-                restricoes="Cotacao via portal cliente.rte.com.br",
+                restricoes="Cotacao via portal rodonaves.com.br",
             )
         finally:
             page.remove_listener("request", request_handler)
@@ -1551,6 +1747,7 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
         cnpj_destinatario: str = "",
         cubagens: Optional[list[dict]] = None,
         preencher_cep_origem: bool = False,
+        numero_destino: str = "",
     ) -> Optional[Cotacao]:
         try:
             self.last_error = None
@@ -1607,6 +1804,7 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
                 cep_destino=cep_dest,
                 cep_origem=cep_orig,
                 peso=peso,
+                numero_destino=numero_destino,
             )
             self._finish_stage("preenchendo_formulario", stage_start, details=f"linhas_cubagem={len(cubagens_cm)}")
             self._passo_atual = "submetendo_cotacao"

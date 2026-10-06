@@ -1,8 +1,8 @@
 [fretio]
 fator_cubagem = 6000
 cache_dir = "cache"
-github_repo = "kaianesteffens/RomaneioBeta"  # Repositório GitHub para auto-update (releases)
-github_repo_aliases = []  # Repositórios extras/fallback para sobreviver a renomeações
+github_repo = "jaroszzeduardo-coder/RomaneioBeta"  # Repositório GitHub para auto-update (releases)
+github_repo_aliases = ["dujarosz/RomaneioBeta-releases"]  # Fallback legado de releases
 
 [romaneio]
 cep_origem = "99740000"
@@ -54,9 +54,9 @@ dominio = "RTE"
 usuario = "SEU_USUARIO"
 senha = "SENHA_RODONAVES"
 cnpj_pagador = "00.000.000/0000-00"
-login_url = "https://cliente.rte.com.br/?showLogin=true"
-cotacao_url = "https://sistema.rte.com.br/bin/ssw1608"
-headless = false
+login_url = "https://rodonaves.com.br/portaldocliente"
+cotacao_url = "https://rodonaves.com.br/cotacao"
+headless = true
 ufs_atendidas = ["AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO", "MA", "MG", "MS", "MT", "PA", "PB", "PE", "PI", "PR", "RJ", "RN", "RO", "RR", "RS", "SC", "SE", "SP", "TO"]
 
 [transportadoras.alfa]
@@ -85,5 +85,5 @@ senha = "SENHA_TRANSLOVATO"
 cnpj_remetente = "00.000.000/0000-00"
 produto = "CONFECCAO"
 headless = true
-cotacao_url = "https://www.translovato.com.br/fale-conosco/solicitacao-de-cotacao#portal-do-cliente"
+cotacao_url = "https://www.translovato.com.br/fale-conosco/solicitacao-de-cotacao"
 ufs_atendidas = ["AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO", "MA", "MG", "MS", "MT", "PA", "PB", "PE", "PI", "PR", "RJ", "RN", "RO", "RR", "RS", "SC", "SE", "SP", "TO"]

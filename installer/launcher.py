@@ -44,8 +44,8 @@ except Exception:  # pragma: no cover
         raise UpdateSignatureError("Verificação de assinatura indisponível no launcher.")
 
 GITHUB_REPOS = (
-    "kaianesteffens/RomaneioBeta",
-    "kaianesteffens/RomaneioBeta-releases",
+    "jaroszzeduardo-coder/RomaneioBeta",
+    "dujarosz/RomaneioBeta-releases",
 )
 _APPDATA_ROOT = Path(os.environ.get("APPDATA", Path.home()))
 _LOCALAPPDATA_ROOT = Path(os.environ.get("LOCALAPPDATA", _APPDATA_ROOT))

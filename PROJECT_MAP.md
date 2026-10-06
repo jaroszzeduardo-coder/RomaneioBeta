@@ -33,8 +33,8 @@ Stack principal:
 
 ## Repositorios relacionados
 
-- `kaianesteffens/RomaneioBeta`: desktop standalone, UI, automacoes locais, providers, updater, instalador e releases.
-- `kaianesteffens/RomaneioBeta-releases`: repositorio legado de releases; mantido apenas como fallback historico de leitura do updater para clientes/builds antigos. Novas releases sao publicadas no proprio `kaianesteffens/RomaneioBeta`.
+- `jaroszzeduardo-coder/RomaneioBeta`: desktop standalone, UI, automacoes locais, providers, updater, instalador e releases.
+- `dujarosz/RomaneioBeta-releases`: repositorio legado de releases; mantido apenas como fallback historico de leitura do updater para clientes/builds antigos. Novas releases sao publicadas no proprio `jaroszzeduardo-coder/RomaneioBeta`.
 
 ## Entradas principais
 
@@ -219,8 +219,10 @@ Campos minimos por provider:
 
 Observacao operacional:
 
-- Rodonaves deve abrir primeiro o entrypoint canônico do portal (`login_url` configurado ou `https://cliente.rte.com.br/?showLogin=true`) para estabelecer sessão/login; `/Quotation` deve ser tratado apenas como destino pós-login, com sucesso validado por elementos reais do formulário e não só pela URL.
-- Rodonaves roda em Chrome real conectado por CDP com `user-data-dir` exclusivo `~/.fretio/rodonaves_browser_data`; a janela nasce headful/off-screen, só aparece para CAPTCHA/interação humana e volta a ficar oculta sem recriar browser/context/page.
+- Translovato usa o modal de login da solicitacao de cotacao; aguarda o redirecionamento antes de repetir Entrar e confirma o CEP do romaneio depois da consulta do CNPJ.
+- O numero do endereco de destino extraido do romaneio colado e enviado ao formulario atual da Rodonaves.
+- Rodonaves deve abrir primeiro o portal oficial (`login_url` configurado ou `https://rodonaves.com.br/portaldocliente`) para estabelecer sessão/login; `https://rodonaves.com.br/cotacao` é o destino de cotação. URLs antigas de `cliente.rte.com.br`, `sistema.rte.com.br`, `/Quotation` e SSW são tratadas como legadas.
+- Rodonaves roda em Chrome real conectado por CDP com `user-data-dir` exclusivo `~/.fretio/rodonaves_browser_data`; com `headless=true`, o portal atual executa sem abrir janela e preserva o mesmo browser/context/page durante a cotação.
 - `alfa`: `login`, `senha`
 - `coopex`: login mínimo `dominio`, `usuario`, `senha`; `cnpj_pagador` é resolvido só na cotação, primeiro na transportadora e depois em `romaneio.cnpj_pagador_padrao`.
 - `translovato`: `cnpj`, `usuario`, `senha`
@@ -243,7 +245,7 @@ Boas praticas:
 - Usar seletores robustos de Playwright.
 - Preservar cleanup de page/context/browser/Playwright/processos.
 - Em providers que reutilizam sessao (ex.: RODONAVES), validar page/context/browser antes de `goto()` e registrar URL alvo, etapa anterior, `headless` e motivo quando houver fechamento de lifecycle.
-- RODONAVES usa reCAPTCHA no portal `cliente.rte.com.br`; preferir modo visível/off-screen (`headless=false`) e, se a sessão iniciar headless e o CAPTCHA bloquear a cotação, refazer apenas a tentativa da RODONAVES em modo visível com diagnóstico seguro.
+- RODONAVES usa a validação invisível do portal `rodonaves.com.br`; o padrão é `headless=true`, sem exibir janela. O modo visível permanece disponível apenas para diagnóstico explícito de uma mudança futura no portal.
 - Diagnósticos locais de provider devem guardar só metadados seguros (URL, etapa, flags de seletores, contagens, trechos redigidos), sem HTML bruto, cookies, tokens, senhas, CNPJ/CPF completo ou dados reais de cliente.
 - Manter `last_error` informativo.
 - Nao salvar senha/logins/cookies em log.

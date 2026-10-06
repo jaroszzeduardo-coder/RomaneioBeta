@@ -134,6 +134,37 @@ def _provider(page):
     return provider
 
 
+def test_translovato_login_submits_again_when_first_click_does_not_log_in():
+    from unittest.mock import AsyncMock, MagicMock
+
+    async def run():
+        document = MagicMock(fill=AsyncMock(), press_sequentially=AsyncMock(), press=AsyncMock())
+        user = MagicMock(fill=AsyncMock())
+        password = MagicMock(fill=AsyncMock(), press=AsyncMock())
+        button = MagicMock(click=AsyncMock(), is_visible=AsyncMock(return_value=True))
+        form = MagicMock()
+        form.locator.side_effect = lambda selector: {
+            TranslovatoProvider.LOGIN_CNPJ_SELECTOR: document,
+            TranslovatoProvider.LOGIN_USER_SELECTOR: user,
+            TranslovatoProvider.LOGIN_PASSWORD_SELECTOR: password,
+        }[selector]
+        form.get_by_role.return_value = button
+        page = MagicMock(goto=AsyncMock())
+        page.locator.side_effect = lambda selector: form if selector == "#login-portal" else password
+        provider = _provider(page)
+        provider._aceitar_cookies = AsyncMock()
+        provider._wait_for_logged_in_state = AsyncMock(side_effect=[False, True])
+
+        assert await provider._login() is True
+        assert button.click.await_count == 2
+        document.press_sequentially.assert_awaited_once_with("12345678000190", delay=50)
+        user.fill.assert_awaited_once_with("usuario")
+        password.fill.assert_awaited_once_with("senha")
+        assert provider._logged_in is True
+
+    asyncio.run(run())
+
+
 def test_translovato_rewrites_receiver_cnpj_after_blur_divergence():
     async def run():
         page = FakePage(always_wrong=False)
@@ -172,5 +203,22 @@ def test_translovato_blocks_quote_when_fallback_keeps_divergent_cnpj():
         assert EXPECTED not in message
         assert WRONG not in message
         assert page.receiver_value == WRONG
+
+    asyncio.run(run())
+
+
+def test_translovato_blocks_quote_with_wrong_delivery_zip():
+    from unittest.mock import AsyncMock, MagicMock
+    import pytest
+
+    async def run():
+        page = MagicMock(wait_for_timeout=AsyncMock())
+        provider = _provider(page)
+        provider._read_delivery_zip_digits = AsyncMock(return_value="90010000")
+        provider._read_delivery_city_uf = AsyncMock(return_value=("", "", ""))
+        provider._validate_receiver_cnpj = AsyncMock()
+        provider._read_receiver_cnpj_digits = AsyncMock(return_value=EXPECTED)
+        with pytest.raises(ValueError, match="CEP de entrega diverge"):
+            await provider._aguardar_e_validar_autopreenchimento_destino(expected_receiver=EXPECTED, expected_cep="90020000")
 
     asyncio.run(run())

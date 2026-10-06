@@ -144,6 +144,7 @@ def _build_rodonaves_kwargs(
     cnpj_destinatario: str,
     cep_origem: str,
     headless_rodonaves: bool,
+    numero_destino: str = "",
 ) -> dict[str, Any] | None:
     """Retorna kwargs para RODONAVES ou None se não configurada."""
     dominio = str(cfg.get("dominio", "RTE") or "RTE").strip()
@@ -165,6 +166,7 @@ def _build_rodonaves_kwargs(
         cnpj_remetente=cnpj_pagador,
         cnpj_destinatario=cnpj_destinatario,
         preencher_cep_origem=bool(_cep(cep_origem)),
+        numero_destino=numero_destino,
     )
 
 

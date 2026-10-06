@@ -747,12 +747,7 @@ async def _executar_cotacoes_com_dados(
                     elif not _uf_atendida(rcfg.get("ufs_atendidas"), uf_destino):
                         erros_setup.append(_resultado_nao_atendido("RODONAVES", uf_destino))
                     else:
-                        # RODONAVES exige janela visível para resolver o reCAPTCHA, então o
-                        # provider sempre roda com headless=False (ver factory._build_rodonaves).
-                        # Mantemos o mesmo valor aqui para que desired_headless coincida com o
-                        # provider já criado no pré-login; caso contrário config legada com
-                        # headless=True dispararia um restart inútil da sessão a cada cotação.
-                        headless_rodonaves = False
+                        headless_rodonaves = bool(rcfg.get("headless", True))
                         _rodo_kwargs = _build_rodonaves_kwargs(
                             cfg=rcfg,
                             origem=origem,
@@ -765,6 +760,7 @@ async def _executar_cotacoes_com_dados(
                             cnpj_destinatario=cnpj_destinatario,
                             cep_origem=cep_origem,
                             headless_rodonaves=headless_rodonaves,
+                            numero_destino=str(dados.get("numero_destino", "") or ""),
                         )
                         if _rodo_kwargs is not None:
                             provider = await _obter_provider_sessao(

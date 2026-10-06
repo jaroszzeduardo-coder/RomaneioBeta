@@ -70,9 +70,9 @@ dominio = "RTE"
 usuario = ""
 senha = ""
 cnpj_pagador = ""
-login_url = "https://cliente.rte.com.br/?showLogin=true"
-cotacao_url = "https://sistema.rte.com.br/bin/ssw1608"
-headless = false
+login_url = "https://rodonaves.com.br/portaldocliente"
+cotacao_url = "https://rodonaves.com.br/cotacao"
+headless = true
 ufs_atendidas = ["AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO", "MA", "MG", "MS", "MT", "PA", "PB", "PE", "PI", "PR", "RJ", "RN", "RO", "RR", "RS", "SC", "SE", "SP", "TO"]
 
 [transportadoras.alfa]
@@ -100,7 +100,7 @@ senha = ""
 cnpj_remetente = ""
 produto = "CONFECCAO"
 headless = true
-cotacao_url = "https://www.translovato.com.br/fale-conosco/solicitacao-de-cotacao#portal-do-cliente"
+cotacao_url = "https://www.translovato.com.br/fale-conosco/solicitacao-de-cotacao"
 ufs_atendidas = ["AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO", "MA", "MG", "MS", "MT", "PA", "PB", "PE", "PI", "PR", "RJ", "RN", "RO", "RR", "RS", "SC", "SE", "SP", "TO"]
 """
 

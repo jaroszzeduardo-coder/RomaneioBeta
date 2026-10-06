@@ -52,17 +52,18 @@ async def _run_translovato_auto_address(
     )
 
 
-def test_translovato_accepts_different_auto_cep_when_cnpj_is_valid():
-    asyncio.run(_run_translovato_auto_address())
+def test_translovato_blocks_different_auto_cep_when_cnpj_is_valid():
+    with pytest.raises(ValueError, match="CEP de entrega diverge"):
+        asyncio.run(_run_translovato_auto_address())
 
 
 def test_translovato_does_not_block_when_city_uf_are_not_detected():
-    asyncio.run(_run_translovato_auto_address(detected_zip="01301100", detected_city="", detected_uf=""))
+    asyncio.run(_run_translovato_auto_address(detected_zip="01415001", detected_city="", detected_uf=""))
 
 
 def test_translovato_blocks_clear_city_uf_divergence():
     with pytest.raises(ValueError, match="Cidade de entrega"):
-        asyncio.run(_run_translovato_auto_address(detected_city="CAMPINAS", detected_uf="SP"))
+        asyncio.run(_run_translovato_auto_address(detected_zip="01415001", detected_city="CAMPINAS", detected_uf="SP"))
 
 
 def test_translovato_still_blocks_divergent_receiver_cnpj():
@@ -105,7 +106,7 @@ def test_rodonaves_forces_headful_session_even_when_requested_headless():
         os.makedirs = original_makedirs
 
 
-def test_factory_build_rodonaves_ignores_headless_true():
+def test_factory_build_rodonaves_respects_headless_true():
     kwargs = _build_rodonaves(
         {
             "dominio": "RTE",
@@ -117,7 +118,7 @@ def test_factory_build_rodonaves_ignores_headless_true():
     )
 
     assert kwargs is not None
-    assert kwargs["headless"] is False
+    assert kwargs["headless"] is True
 
 
 def test_rodonaves_hide_window_stays_offscreen_without_visible_restore(monkeypatch):

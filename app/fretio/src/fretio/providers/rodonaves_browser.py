@@ -56,7 +56,7 @@ class RodonavesBrowserMixin:
 
     def _score_page_url(self, url: str | None) -> tuple[int, str]:
         lowered = str(url or "").strip().lower()
-        if f"{self.BASE_URL.lower()}/quotation" in lowered:
+        if f"{self.BASE_URL.lower()}/cotacao" in lowered:
             return (0, lowered)
         if self.BASE_URL.lower() in lowered:
             return (1, lowered)
@@ -274,7 +274,7 @@ class RodonavesBrowserMixin:
         await self._init_browser_inner()
 
     async def _init_browser_inner(self):
-        """Lanca Chrome headful/off-screen e conecta via CDP na mesma sessao persistente."""
+        """Lança Chrome via CDP, em headless quando configurado."""
         import shutil as _shutil
         chrome_path = find_chrome()
 
@@ -317,6 +317,8 @@ class RodonavesBrowserMixin:
                 "--enable-features=NetworkService,NetworkServiceInProcess",
                 "--disable-component-extensions-with-background-pages",
             ]
+            if self.headless:
+                launch_args.append("--headless=new")
 
             self._chrome_proc = subprocess.Popen(
                 launch_args,
@@ -342,7 +344,7 @@ class RodonavesBrowserMixin:
                     break
 
             if chrome_ok:
-                self._effective_headless = False
+                self._effective_headless = self.headless
                 self._active_user_data_dir = udd
                 break
 
@@ -398,7 +400,7 @@ class RodonavesBrowserMixin:
         if self._page is None:
             self._page = self._context.pages[0] if self._context.pages else await self._context.new_page()
 
-        if not await self._definir_janela_offscreen_inicial():
+        if not self._effective_headless and not await self._definir_janela_offscreen_inicial():
             _kill_proc(self._chrome_proc)
             self._chrome_proc = None
             await self.cleanup()
@@ -414,6 +416,8 @@ class RodonavesBrowserMixin:
 
     async def _ocultar_janela(self):
         """Move a janela para coordenadas fora da tela (invisível)."""
+        if self._effective_headless:
+            return
         try:
             await self._sync_active_page()
             if not self._cdp_session:
@@ -470,6 +474,10 @@ class RodonavesBrowserMixin:
         # Regra de negócio: o Chrome real/headful só pode ficar visível
         # enquanto houver interação humana (CAPTCHA). O ``finally`` garante
         # o re-hide mesmo se o bloco levantar exceção.
+        if self._effective_headless:
+            yield False
+            return
+
         self._window_visible_for_captcha = True
         try:
             try:

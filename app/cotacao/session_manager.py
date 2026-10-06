@@ -517,7 +517,7 @@ class TransportadoraSession:
                         _log_diag("RODONAVES ignorada por filtro de UF inválido")
                     else:
                         foco_rodonaves = str(MODO_FOCO_TRANSPORTADORA).strip().lower() == "rodonaves"
-                        headless_rodonaves = False if foco_rodonaves else bool(rcfg.get("headless", False))
+                        headless_rodonaves = bool(rcfg.get("headless", True))
                         provider = provider_factory.create("rodonaves", headless=headless_rodonaves)
                         if provider is not None:
                             await self.registrar_provider("rodonaves", provider)

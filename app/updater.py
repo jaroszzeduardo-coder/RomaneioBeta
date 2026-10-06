@@ -47,8 +47,8 @@ _HTTP_TIMEOUT = 30
 # permanece como fallback de leitura para clientes/builds antigos durante a
 # transicao (releases ja publicadas la continuam resolviveis).
 _DEFAULT_GITHUB_REPOS = (
-    "kaianesteffens/RomaneioBeta",
-    "kaianesteffens/RomaneioBeta-releases",
+    "jaroszzeduardo-coder/RomaneioBeta",
+    "dujarosz/RomaneioBeta-releases",
 )
 _GITHUB_REPO_ENV_VARS = (
     "FRETIO_GITHUB_REPO",

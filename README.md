@@ -28,7 +28,7 @@ Exemplo mínimo, com valores fictícios:
 
 ```toml
 [fretio]
-github_repo = "kaianesteffens/RomaneioBeta"
+github_repo = "jaroszzeduardo-coder/RomaneioBeta"
 
 [romaneio]
 cep_origem = "01001000"
