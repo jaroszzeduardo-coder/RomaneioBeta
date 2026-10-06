@@ -1,18 +1,18 @@
 {
-  "release_repo_aliases": "dujarosz/RomaneioBeta",
+  "repo_asset_max_bytes": 99614720,
   "skipped_repo_assets": [],
-  "version": "2.65",
-  "committed_repo_assets": [
-    "Fretio-Setup-latest.exe",
-    "Fretio-Update-latest.zip",
-    "Romaneio.exe"
-  ],
+  "release_repo_aliases": "jaroszzeduardo-coder/RomaneioBeta",
+  "release_repo": "jaroszzeduardo-coder/RomaneioBeta",
+  "version": "2.66",
   "release_assets": [
     "Fretio-Setup-latest.exe",
     "Fretio-Update-latest.zip",
     "Fretio-Update-latest.zip.sig",
     "Romaneio.exe"
   ],
-  "release_repo": "dujarosz/RomaneioBeta",
-  "repo_asset_max_bytes": 99614720
+  "committed_repo_assets": [
+    "Fretio-Setup-latest.exe",
+    "Fretio-Update-latest.zip",
+    "Romaneio.exe"
+  ]
 }
