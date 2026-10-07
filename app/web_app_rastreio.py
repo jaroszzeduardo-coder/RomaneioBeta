@@ -33,6 +33,7 @@ class RastreioMixin:
         }
 
     def rastreio_iniciar(self, chaves: list | None = None) -> dict:
+        self._apply_pending_runtime_config()
         if not self._notas:
             return {"erro": "Nenhuma NF-e carregada para rastrear"}
         bloqueio = self._gate("rastreio")

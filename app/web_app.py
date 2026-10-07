@@ -109,6 +109,7 @@ class Api(ConfigMixin, StartupMixin, RastreioMixin, CotacaoMixin, RomaneioMixin)
         self._loop: Any = None
         self._cotando = False
         self._rastreando = False
+        self._runtime_config_dirty = False
         # Serializa o check-and-set de _cotando/_rastreando: chamadas do js_api
         # podem chegar concorrentes, então reservar a flag precisa ser atômico.
         # Os resets para False ficam fora do lock de propósito: são stores de um
@@ -140,6 +141,17 @@ class Api(ConfigMixin, StartupMixin, RastreioMixin, CotacaoMixin, RomaneioMixin)
                 loop.shutdown(cleanup_coro_factory=(sessao.cleanup if sessao is not None else None))
             except Exception:
                 pass
+
+    def _refresh_runtime_config(self) -> None:
+        if self._cotando or self._rastreando:
+            self._runtime_config_dirty = True
+            return
+        self._runtime_config_dirty = False
+        self._teardown()
+
+    def _apply_pending_runtime_config(self) -> None:
+        if self._runtime_config_dirty and not self._cotando and not self._rastreando:
+            self._refresh_runtime_config()
 
     def _emit(self, evento: str, payload: dict | None = None) -> None:
         emit(self._window, evento, payload)

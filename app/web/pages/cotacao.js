@@ -13,6 +13,12 @@
     return app.state.cotacao || (app.state.cotacao = { running: false, started: false, resumo: "", runStatus: "" });
   }
 
+  function autoResize(el) {
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }
+
   async function iniciar(app) {
     const ta = document.getElementById("cotInput");
     const texto = (ta.value || "").trim();
@@ -100,7 +106,7 @@
           $("#cotRunStatus", view).textContent = pronto ? "Pronto para iniciar." : "Cole um romaneio para iniciar.";
         }
       };
-      ta.addEventListener("input", updateHint);
+      ta.addEventListener("input", () => { updateHint(); autoResize(ta); });
       $("#cotStart", view).addEventListener("click", () => iniciar(app));
       $("#cotCopy", view).addEventListener("click", async () => {
         const txt = $("#cotResult", view).textContent || "";
@@ -111,6 +117,7 @@
       // Pré-carrega romaneio vindo do PDF/processamento, se houver
       if (app.state.romaneioTexto) { ta.value = app.state.romaneioTexto; }
       updateHint();
+      autoResize(ta);
 
       // Re-hidrata o resultado/status da cotação em curso ou concluída nesta
       // sessão — sobrevive à navegação para outra tela e volta (Codex P2).
