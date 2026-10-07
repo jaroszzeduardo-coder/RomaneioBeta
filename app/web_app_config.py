@@ -25,6 +25,13 @@ class ConfigMixin:
     Api (self._config_path / self._empresa) — a superfície pública pywebview
     permanece idêntica (ver test_char_web_app_api_surface.py)."""
 
+    def _config_saved(self, ok: bool) -> bool:
+        if ok:
+            refresh = getattr(self, "_refresh_runtime_config", None)
+            if callable(refresh):
+                refresh()
+        return ok
+
     def set_tema(self, modo: str) -> dict[str, Any]:
         modo = (modo or "sistema").lower()
         if modo not in ("claro", "escuro", "sistema"):
@@ -41,6 +48,7 @@ class ConfigMixin:
             ok = True
         except Exception:
             ok = False
+        self._config_saved(ok)
         return {"ok": ok, "tema": modo, "tema_efetivo": _resolver_tema_efetivo(modo)}
 
     @staticmethod
@@ -124,7 +132,7 @@ class ConfigMixin:
             except (TypeError, ValueError):
                 fb["max_paralelo"] = 3
 
-        return {"ok": self._write_config(mut)}
+        return {"ok": self._config_saved(self._write_config(mut))}
 
     def config_salvar_aparencia(self, data: dict) -> dict:
         data = data or {}
@@ -140,7 +148,7 @@ class ConfigMixin:
             if data.get("botao"):
                 fb["ui_botao"] = str(data["botao"])
 
-        ok = self._write_config(mut)
+        ok = self._config_saved(self._write_config(mut))
         return {
             "ok": ok, "tema_efetivo": _resolver_tema_efetivo(tema),
             "raio": data.get("raio"), "botao": data.get("botao"),
@@ -157,7 +165,7 @@ class ConfigMixin:
             if "ufs_atendidas" in data:
                 t["ufs_atendidas"] = self._norm_ufs(data.get("ufs_atendidas"))
 
-        return {"ok": self._write_config(mut)}
+        return {"ok": self._config_saved(self._write_config(mut))}
 
     def config_salvar_credenciais(self, nome: str, campos: dict) -> dict:
         nome = str(nome)
@@ -175,4 +183,4 @@ class ConfigMixin:
                     continue
                 t[k] = v
 
-        return {"ok": self._write_config(mut)}
+        return {"ok": self._config_saved(self._write_config(mut))}

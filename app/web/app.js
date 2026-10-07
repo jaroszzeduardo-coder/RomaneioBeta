@@ -14,13 +14,13 @@ function apiBridge() {
 }
 
 const TITULOS = {
-  dashboard: "Dashboard", romaneio: "Romaneio", cotacao: "Cotação",
+  romaneio: "Romaneio", cotacao: "Cotação",
   fornecedores: "Fornecedores", rastreio: "Rastreio", config: "Configurações",
 };
 
 window.App = {
   state: { empresa: "", versao: "", tema: "escuro", transportadoras: [], dashboard: {} },
-  page: "dashboard",
+  page: "romaneio",
   // Dono (página que iniciou) de cada operação longa, por família de evento.
   // Eventos de operação são roteados ao dono mesmo quando ele não está visível,
   // para o resultado/progresso sobreviver à navegação. null = nenhuma em curso.
@@ -43,7 +43,7 @@ window.App = {
       b.classList.toggle("is-active", b.dataset.page === name));
     $("#pageTitle").textContent = TITULOS[name];
     $("#pageSub").textContent = window.App.state.subTitulo || "Nenhum arquivo carregado";
-    $("#backBtn").hidden = name === "dashboard";
+    $("#backBtn").hidden = name === "romaneio";
 
     const view = this.view();
     view.innerHTML = "";
@@ -136,7 +136,7 @@ window.onBackendEvent = function (evt) {
 function bindShell() {
   document.querySelectorAll(".nav-item[data-page]").forEach((btn) =>
     btn.addEventListener("click", () => window.App.navigate(btn.dataset.page)));
-  $("#backBtn").addEventListener("click", () => window.App.navigate("dashboard"));
+  $("#backBtn").addEventListener("click", () => window.App.navigate("romaneio"));
   $("#empresaChip").addEventListener("click", async () => {
     const a = await apiBridge();
     if (!a.trocar_empresa) return;
@@ -167,7 +167,7 @@ async function boot() {
   applyTema(b.tema_efetivo || "escuro");
   applyAparencia(b.raio, b.botao);
 
-  window.App.navigate("dashboard");
+  window.App.navigate("romaneio");
 }
 
 document.addEventListener("DOMContentLoaded", boot);

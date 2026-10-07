@@ -54,6 +54,7 @@ class CotacaoMixin:
         self._emit("login_status", {"nome": str(nome or ""), "status": str(status or "")})
 
     def cotacao_iniciar(self, romaneio_texto: str, cnpj_remetente: str = "", cep_origem: str = "") -> dict:
+        self._apply_pending_runtime_config()
         texto = str(romaneio_texto or "").strip()
         if not texto:
             return {"erro": "Cole um romaneio antes de cotar"}

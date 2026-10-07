@@ -59,6 +59,12 @@ Front (HTML/CSS/JS locais renderizados no WebView2):
 - `app/web/format.js`: mascaras de CEP, CNPJ, moeda e decimal.
 - `app/web/pages/*.js`: telas (romaneio, cotacao, fornecedores, rastreio, configuracoes, selecao de empresa).
 
+Comportamento da interface:
+
+- O app abre diretamente em Romaneio; o Dashboard não faz parte da navegação ativa.
+- Os campos de texto do Romaneio e da Cotação crescem conforme o conteúdo, sem redimensionamento manual.
+- Ao salvar configuração, a sessão de providers é renovada antes da próxima operação; uma operação já em andamento não é interrompida.
+
 Responsabilidades observadas:
 
 - Controla startup e update.
@@ -270,6 +276,7 @@ Arquivos citados/importados pela UI:
 - `app/extrator_pedidos.py`: extracao de pedidos/romaneio.
 - `app/extrator_nfe.py`: leitura/importacao de NF-e/XML/DANFE.
 - `app/rastreamento.py`: rastreio e links.
+- `app/rastreamento_captura.py`: captura full-page da consulta localizada para qualquer status.
 - `app/cotacao/romaneio_parser.py`: parser de romaneio colado.
 
 Fluxos provaveis:
@@ -277,6 +284,7 @@ Fluxos provaveis:
 - Romaneio PDF/texto -> extrator/parser -> dados de envio -> cotacao.
 - NF-e/XML/DANFE -> `extrator_nfe.py` -> dados resumidos -> UI/cotacao.
 - Rastreio -> `rastreamento.py` -> resultados na UI -> evento de uso.
+- Toda consulta localizada salva screenshot, esteja a mercadoria entregue ou ainda em trânsito.
 
 ## Erros e logs (somente local)
 
