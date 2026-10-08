@@ -68,9 +68,13 @@ async def _braspress_screenshot(resultado: ResultadoRastreio, numero_nfe: str, t
 
 
 async def _salvar_screenshot_entrega(page, resultado: ResultadoRastreio, numero_nfe: str) -> None:
-    screenshot_path = _gerar_path_screenshot(numero_nfe)
-    await page.screenshot(path=str(screenshot_path), full_page=True)
-    resultado.screenshot_path = str(screenshot_path)
+    """Salva a tela da consulta independentemente do status da entrega."""
+    try:
+        screenshot_path = _gerar_path_screenshot(numero_nfe)
+        await page.screenshot(path=str(screenshot_path), full_page=True)
+        resultado.screenshot_path = str(screenshot_path)
+    except Exception as exc:
+        logger.warning("Falha ao salvar screenshot do rastreamento da NF %s: %s", numero_nfe, exc)
 
 
 def _injetar_base_href(html: str, base_url: str) -> str:

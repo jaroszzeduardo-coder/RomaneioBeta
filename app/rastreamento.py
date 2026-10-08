@@ -67,15 +67,15 @@ from rastreamento_status import (
 
 
 _TRACKING_URLS: dict[str, str] = {
-    "braspress": "https://www.braspress.com/rastreie-sua-encomenda/",
+    "braspress": "https://blue.braspress.com/site/w/tracking/view",
     "alfa": "https://alfatransportes.com.br/",
     "trd": "https://platform.senior.com.br/logistica-tck/tms/tck-frontend/#/login/tracking?tenant=ZEhKa2RISmhibk53YjNKMFpYTT0%3D",
     "agex": "https://cliente.agex.com.br/rastreamento",
     "eucatur": "https://ssw.inf.br/2/rastreamento?sigla_emp=EUC&sc=N&sl=N",
-    "coopex": "https://coopex.com.br/solicitar-cotacao-form-1/",
+    "coopex": "https://ssw.inf.br/2/rastreamento?sigla_emp=CLD&sc=N&sl=N",
     "viopex": "https://ssw.inf.br/2/rastreamento?",
     "mengue": "https://ssw.inf.br/2/rastreamento?sigla_emp=MEN&sc=N&sl=N",
-    "rodonaves": "https://rodonaves.com.br/rastreio-de-mercadoria",
+    "rodonaves": "https://rodonaves.com.br/content/rodonaves/br/rastreio-de-mercadoria.html",
 }
 
 # Siglas SSW remanescentes para fluxos especificos de DANFE
@@ -184,7 +184,6 @@ async def _rastrear_braspress(
             resultado.entregue = True
             resultado.status_texto = f"ENTREGUE em {entregue_em}" if entregue_em and entregue_em != "-" else "ENTREGUE"
             logger.info(f"[RASTREIO-BRASPRESS] NF {numero_nfe}: {resultado.status_texto}")
-            await _braspress_screenshot(resultado, numero_nfe, track_url)
         else:
             resultado.entregue = False
             if previsao:
@@ -193,6 +192,8 @@ async def _rastrear_braspress(
             else:
                 resultado.status_texto = status_campo or "Em trânsito"
             logger.info(f"[RASTREIO-BRASPRESS] NF {numero_nfe}: {resultado.status_texto}")
+
+        await _braspress_screenshot(resultado, numero_nfe, track_url)
 
     except Exception as e:
         msg = str(e or "").strip()
@@ -259,6 +260,8 @@ async def _aplicar_resultado_texto(
         resultado.status_texto = f"Previsão: {previsao}"
     else:
         resultado.status_texto = "Consulta realizada, mas o portal não retornou um status legível"
+    if page is not None:
+        await _salvar_screenshot_entrega(page, resultado, numero_nfe)
 
 
 async def _rastrear_ssw_remetente_http(
@@ -325,8 +328,10 @@ async def _rastrear_ssw_remetente_http(
 
         resultado.entregue = "ENTREGUE" in f"{status} {detalhe}".upper()
         resultado.status_texto = _montar_status(status, detalhe)
-        if resultado.entregue:
+        if detail_url:
             resultado.screenshot_path = await _capturar_ssw_detalhado_fullpage(detail_url, numero_nfe)
+        else:
+            resultado.screenshot_path = await _capturar_html_fullpage(resp.text, result_url, numero_nfe)
     except Exception as e:
         msg = str(e or "").strip()
         logger.warning(f"[RASTREIO-{resultado.transportadora}] NF {numero_nfe}: erro SSW remetente: {msg}")
@@ -462,7 +467,6 @@ async def _rastrear_trd(
             data_fmt = _fmt_data(data_entrega_raw) if data_entrega_raw else ""
             resultado.status_texto = f"ENTREGUE em {data_fmt}" if data_fmt else "ENTREGUE"
             logger.info(f"[RASTREIO-TRD] NF {numero_nfe}: {resultado.status_texto}")
-            await _trd_screenshot(resultado, numero_nfe, tracking.get("codigo", ""))
         else:
             resultado.entregue = False
             data_prev_fmt = _fmt_data(data_prev_raw) if data_prev_raw else ""
@@ -472,6 +476,8 @@ async def _rastrear_trd(
             else:
                 resultado.status_texto = desc_sit or "Em trânsito"
             logger.info(f"[RASTREIO-TRD] NF {numero_nfe}: {resultado.status_texto}")
+
+        await _trd_screenshot(resultado, numero_nfe, tracking.get("codigo", ""))
 
     except httpx.HTTPStatusError as e:
         logger.warning(f"[RASTREIO-TRD] NF {numero_nfe}: HTTP {e.response.status_code}")
@@ -597,12 +603,14 @@ async def _rastrear_agex(
 
         if etapas_concluidas:
             resultado.status_texto = _montar_status(etapas_concluidas[-1], previsao=previsao)
+            await _salvar_screenshot_entrega(page, resultado, numero_nfe)
             return
 
         await _aplicar_resultado_texto(
             resultado,
             numero_nfe,
             body_text,
+            page,
             not_found_patterns=["NENHUMA ENCOMENDA ENCONTRADA", "NENHUM PEDIDO ENCONTRADO"],
         )
     except Exception as e:
@@ -727,6 +735,7 @@ async def _rastrear_rodonaves(
             resultado.status_texto = _montar_status(detalhe_evento, previsao=previsao)
         else:
             resultado.status_texto = "Consulta localizada, mas o portal não retornou um status legível"
+        await _salvar_screenshot_entrega(page, resultado, numero_nfe)
     except Exception as e:
         msg = str(e or "").strip()
         logger.warning(f"[RASTREIO-RODONAVES] NF {numero_nfe}: erro: {msg}")
@@ -855,10 +864,6 @@ async def _rastrear_ssw(
         if entregue:
             resultado.entregue = True
             resultado.status_texto = "ENTREGUE"
-            screenshot_path = _gerar_path_screenshot(numero_nfe)
-            await page.screenshot(path=str(screenshot_path), full_page=True)
-            resultado.screenshot_path = str(screenshot_path)
-            logger.info(f"[RASTREIO-{resultado.transportadora}] NF {numero_nfe}: ENTREGUE. Screenshot: {screenshot_path}")
         else:
             resultado.entregue = False
             previsao = _extrair_previsao(body_text)
@@ -880,6 +885,8 @@ async def _rastrear_ssw(
             else:
                 resultado.status_texto = "Em tr\u00e2nsito" + (f" \u2014 Previs\u00e3o: {previsao}" if previsao else "")
             logger.info(f"[RASTREIO-{resultado.transportadora}] NF {numero_nfe}: {resultado.status_texto}")
+
+        await _salvar_screenshot_entrega(page, resultado, numero_nfe)
 
     except Exception as e:
         msg = str(e or "").strip()
@@ -994,12 +1001,6 @@ async def _rastrear_alfa(
         if entregue:
             resultado.entregue = True
             resultado.status_texto = "ENTREGUE" + (f" — Previsão: {previsao}" if previsao else "")
-            resultado.screenshot_path = await _capturar_html_fullpage(
-                resp.text,
-                "https://areadocliente.alfatransportes.com.br/",
-                numero_nfe,
-            )
-            logger.info(f"[RASTREIO-ALFA] NF {numero_nfe}: ENTREGUE. Screenshot: {resultado.screenshot_path}")
         else:
             resultado.entregue = False
             if last_status:
@@ -1007,6 +1008,13 @@ async def _rastrear_alfa(
             else:
                 resultado.status_texto = "Em trânsito" + (f" — Previsão: {previsao}" if previsao else "")
             logger.info(f"[RASTREIO-ALFA] NF {numero_nfe}: {resultado.status_texto}")
+
+        resultado.screenshot_path = await _capturar_html_fullpage(
+            resp.text,
+            "https://areadocliente.alfatransportes.com.br/",
+            numero_nfe,
+        )
+        logger.info(f"[RASTREIO-ALFA] NF {numero_nfe}: Screenshot: {resultado.screenshot_path}")
 
     except Exception as e:
         msg = str(e or "").strip()
