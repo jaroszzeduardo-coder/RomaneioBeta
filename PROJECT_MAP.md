@@ -228,6 +228,7 @@ Observacao operacional:
 - Translovato usa o modal de login da solicitacao de cotacao; aguarda o redirecionamento antes de repetir Entrar e confirma o CEP do romaneio depois da consulta do CNPJ.
 - O numero do endereco de destino extraido do romaneio colado e enviado ao formulario atual da Rodonaves.
 - Rodonaves deve abrir primeiro o portal oficial (`login_url` configurado ou `https://rodonaves.com.br/portaldocliente`) para estabelecer sessão/login; `https://rodonaves.com.br/cotacao` é o destino de cotação. URLs antigas de `cliente.rte.com.br`, `sistema.rte.com.br`, `/Quotation` e SSW são tratadas como legadas.
+- Na leitura do resultado da Rodonaves, o total final tem prioridade sobre parcelas como frete-peso, GRIS, pedágio e taxas; respostas contendo apenas componentes não devem virar cotação válida.
 - Rodonaves roda em Chrome real conectado por CDP com `user-data-dir` exclusivo `~/.fretio/rodonaves_browser_data`; com `headless=true`, o portal atual executa sem abrir janela e preserva o mesmo browser/context/page durante a cotação.
 - `alfa`: `login`, `senha`
 - `coopex`: login mínimo `dominio`, `usuario`, `senha`; `cnpj_pagador` é resolvido só na cotação, primeiro na transportadora e depois em `romaneio.cnpj_pagador_padrao`.

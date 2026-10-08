@@ -2,6 +2,7 @@
 from contextlib import asynccontextmanager
 from typing import Any, Optional
 import asyncio
+import html
 import json
 import os
 import re
@@ -677,9 +678,107 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
         return d
 
     @staticmethod
+    def _parse_valor_monetario(value: Any) -> float | None:
+        if isinstance(value, (int, float)) and value > 0:
+            return round(float(value), 2)
+        if not isinstance(value, str):
+            return None
+        text = value.strip()
+        match_br = re.search(r"(?:R\$\s*)?([\d.]+,\d{2})", text)
+        if match_br:
+            try:
+                return round(float(match_br.group(1).replace(".", "").replace(",", ".")), 2)
+            except ValueError:
+                return None
+        match_en = re.search(r"(?:R\$\s*)?(\d+\.\d{2})", text)
+        if match_en:
+            try:
+                return round(float(match_en.group(1)), 2)
+            except ValueError:
+                return None
+        return None
+
+    @classmethod
+    def _extrair_valor_frete_do_texto(cls, texto: str) -> float | None:
+        raw = html.unescape(str(texto or "")).replace("\xa0", " ")
+        raw = re.sub(
+            r"(?i)<\s*(?:br\s*/?|/\s*(?:div|td|th|tr|li|p|section))\s*>",
+            "\n",
+            raw,
+        )
+        raw = re.sub(r"(?s)<[^>]+>", " ", raw)
+        lines = [re.sub(r"\s+", " ", line).strip() for line in raw.splitlines()]
+        text = "\n".join(line for line in lines if line)
+
+        total_labels = (
+            r"valor\s+total(?:\s+(?:do\s+)?frete)?",
+            r"total\s+(?:do\s+)?frete",
+            r"total\s+geral",
+            r"total\s+a\s+pagar",
+            r"valor\s+da\s+cota(?:ç|c)[ãa]o",
+            r"freight\s+total",
+            r"total\s+freight",
+        )
+        invoice_terms = (
+            "nota fiscal", "nf-e", "valor nf", "total nf", "declarado",
+            "mercadoria", "produtos",
+        )
+        component_terms = (
+            "frete peso", "peso frete", "frete valor", "ad valorem", "gris",
+            "pedagio", "pedágio", "despacho", "taxa", "seguro", "coleta",
+            "icms", "componente",
+        )
+
+        for label in total_labels:
+            pattern = rf"(?i)\b{label}\b[^\nR$]{{0,50}}R\$\s*([\d.]+,\d{{2}})"
+            for match in re.finditer(pattern, text):
+                line_start = text.rfind("\n", 0, match.start()) + 1
+                line_end = text.find("\n", match.end())
+                if line_end < 0:
+                    line_end = len(text)
+                line = text[line_start:line_end].lower()
+                if any(term in line for term in invoice_terms):
+                    continue
+                value = cls._parse_valor_monetario(match.group(1))
+                if value is not None:
+                    return value
+
+        candidates: list[tuple[int, float]] = []
+        all_values: list[float] = []
+        for match in re.finditer(r"R\$\s*([\d.]+,\d{2})", text, re.IGNORECASE):
+            value = cls._parse_valor_monetario(match.group(1))
+            if value is None:
+                continue
+            line_start = text.rfind("\n", 0, match.start()) + 1
+            line_end = text.find("\n", match.end())
+            if line_end < 0:
+                line_end = len(text)
+            line = text[line_start:line_end].lower()
+            if any(term in line for term in invoice_terms):
+                continue
+            if any(term in line for term in component_terms):
+                continue
+            all_values.append(value)
+            score = 0
+            if "frete" in line or "freight" in line:
+                score += 4
+            if "cotacao" in line or "cotação" in line:
+                score += 2
+            if "total" in line:
+                score += 3
+            if score > 0:
+                candidates.append((score, value))
+
+        if candidates:
+            best_score = max(score for score, _value in candidates)
+            return max(value for score, value in candidates if score == best_score)
+        if len(all_values) == 1:
+            return all_values[0]
+        return None
+
+    @staticmethod
     def _extrair_de_json(data) -> tuple:
-        """Extrai (valor_frete, prazo_dias) de resposta JSON da API Rodonaves."""
-        valor_frete = None
+        """Extrai o total final e o prazo da resposta da API Rodonaves."""
         prazo_dias = 0
 
         if not data:
@@ -689,16 +788,7 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
             for html_key in ("Data", "data", "Result", "result", "Html", "html", "Content", "content", "View", "view"):
                 html_data = data.get(html_key)
                 if isinstance(html_data, str) and len(html_data) > 20:
-                    for m in re.finditer(r"R\$\s*([\d.]+,\d{2})", html_data):
-                        trecho = html_data[max(0, m.start() - 200): m.end() + 200].lower()
-                        if any(nf in trecho for nf in ("nota fiscal", "nf-e", "declarado", "produtos", "mercadoria")):
-                            continue
-                        if any(kw in trecho for kw in (
-                            "frete", "cotacao", "total geral",
-                            "valor total", "total do frete", "total frete", "prazo", "freight", "total",
-                        )):
-                            valor_frete = float(m.group(1).replace(".", "").replace(",", "."))
-                            break
+                    valor_frete = RodonavesProvider._extrair_valor_frete_do_texto(html_data)
                     if valor_frete is not None:
                         m_prazo = re.search(r"(\d+)\s*(?:dias?|day|dia\(s\)|dias úteis)", html_data, re.IGNORECASE)
                         if m_prazo:
@@ -706,23 +796,7 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
                         return valor_frete, prazo_dias
 
         def _parse_val(val: Any) -> float | None:
-            if isinstance(val, (int, float)) and val > 0:
-                return round(float(val), 2)
-            if isinstance(val, str):
-                s = val.strip()
-                m_br = re.search(r"(?:R\$\s*)?([\d.]+,\d{2})", s)
-                if m_br:
-                    try:
-                        return round(float(m_br.group(1).replace(".", "").replace(",", ".")), 2)
-                    except Exception:
-                        pass
-                m_en = re.search(r"(?:R\$\s*)?(\d+\.\d{2})", s)
-                if m_en:
-                    try:
-                        return round(float(m_en.group(1)), 2)
-                    except Exception:
-                        pass
-            return None
+            return RodonavesProvider._parse_valor_monetario(val)
 
         def _parse_prazo(val: Any) -> int:
             if isinstance(val, (int, float)) and val > 0:
@@ -743,10 +817,14 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
             "quantidade", "discount", "desconto", "aliquota", "icms",
         )
 
+        total_freight_keys = (
+            "totalfreight", "freighttotal", "totalfrete", "vlrtotalfrete",
+            "valortotalfrete", "totalgeral", "totalapagar",
+        )
+
         freight_keys = (
-            "totalfreight", "freighttotal", "vlrfrete", "valorfrete",
-            "totalfrete", "vlrtotalfrete", "valortotalfrete", "frete",
-            "freight", "freightvalue", "valuefreight", "freightprice",
+            "vlrfrete", "valorfrete", "freightvalue", "valuefreight",
+            "freightprice", "frete", "freight",
         )
 
         total_keys = (
@@ -759,39 +837,46 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
             "transittime", "leadtime", "prazodias", "prazodeentrega",
         )
 
-        def _buscar(obj):
-            nonlocal valor_frete, prazo_dias
+        component_keys = (
+            "fretepeso", "pesofrete", "fretevalor", "freightweight",
+            "advalorem", "gris", "pedagio", "despacho", "taxa", "seguro",
+            "coleta", "icms", "component",
+        )
+        candidates: list[tuple[int, float]] = []
+
+        def _buscar(obj, path: str = ""):
+            nonlocal prazo_dias
             if isinstance(obj, dict):
                 for key, val in obj.items():
-                    kl = key.lower()
-                    if any(ign in kl for ign in ignored_keys):
+                    kl = re.sub(r"[^a-z0-9]", "", str(key).lower())
+                    full_key = f"{path}{kl}"
+                    if any(ign in full_key for ign in ignored_keys):
                         continue
-                    if valor_frete is None and any(kw in kl for kw in freight_keys):
-                        parsed = _parse_val(val)
-                        if parsed is not None and parsed > 0:
-                            valor_frete = parsed
-                    if prazo_dias == 0 and any(kw in kl for kw in prazo_keys):
+                    if prazo_dias == 0 and any(kw in full_key for kw in prazo_keys):
                         prazo_dias = _parse_prazo(val)
-
-                if valor_frete is None:
-                    for key, val in obj.items():
-                        kl = key.lower()
-                        if any(ign in kl for ign in ignored_keys):
-                            continue
-                        if any(kw in kl for kw in total_keys):
-                            parsed = _parse_val(val)
-                            if parsed is not None and parsed > 0:
-                                valor_frete = parsed
-                                break
-
-                for val in obj.values():
                     if isinstance(val, (dict, list)):
-                        _buscar(val)
+                        _buscar(val, full_key)
+                        continue
+                    parsed = _parse_val(val)
+                    if parsed is None or parsed <= 0:
+                        continue
+                    if any(component in full_key for component in component_keys):
+                        continue
+                    if any(total_key in full_key for total_key in total_freight_keys):
+                        candidates.append((100, parsed))
+                    elif full_key in freight_keys or any(full_key.endswith(key) for key in freight_keys):
+                        candidates.append((60, parsed))
+                    elif full_key in total_keys or any(full_key.endswith(key) for key in total_keys):
+                        candidates.append((30, parsed))
             elif isinstance(obj, list):
                 for item in obj:
-                    _buscar(item)
+                    _buscar(item, path)
 
         _buscar(data)
+        if not candidates:
+            return None, prazo_dias
+        best_priority = max(priority for priority, _value in candidates)
+        valor_frete = max(value for priority, value in candidates if priority == best_priority)
         return valor_frete, prazo_dias
 
 
@@ -1590,12 +1675,7 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
                     }""")
                     for txt in (result_data or []):
                         if valor_frete is None:
-                            for m in re.finditer(r"R\$\s*([\d.]+,\d{2})", txt):
-                                sub = txt[max(0, m.start() - 100): m.end() + 100].lower()
-                                if any(nf_kw in sub for nf_kw in ("nota fiscal", "nf-e", "declarado", "produtos", "mercadoria")):
-                                    continue
-                                valor_frete = float(m.group(1).replace(".", "").replace(",", "."))
-                                break
+                            valor_frete = self._extrair_valor_frete_do_texto(txt)
                         if prazo_dias == 0:
                             m_prazo = re.search(r"(\d+)\s*(?:dias?|day|dia\(s\)|dias úteis)", txt, re.IGNORECASE)
                             if m_prazo:
@@ -1608,13 +1688,7 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
             if valor_frete is None and "text" in api_result:
                 try:
                     api_text = api_result["text"]
-                    for m in re.finditer(r"R\$\s*([\d.]+,\d{2})", api_text):
-                        trecho = api_text[max(0, m.start() - 120): m.end() + 120].lower()
-                        if any(nf_kw in trecho for nf_kw in ("nota fiscal", "nf-e", "declarado", "produtos", "mercadoria")):
-                            continue
-                        if any(kw in trecho for kw in ("frete", "cotacao", "total geral", "valor total", "total", "prazo", "freight", "price")):
-                            valor_frete = float(m.group(1).replace(".", "").replace(",", "."))
-                            break
+                    valor_frete = self._extrair_valor_frete_do_texto(api_text)
                     if prazo_dias == 0:
                         m_prazo = re.search(r"(\d+)\s*(?:dias?|day|dia\(s\)|dias úteis)", api_text, re.IGNORECASE)
                         if m_prazo:
@@ -1643,13 +1717,7 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
                         logger.error(f"[{self.nome}] {self.last_error}")
                         return None
 
-                    for m in re.finditer(r"R\$\s*([\d.]+,\d{2})", body_norm):
-                        trecho = body_norm[max(0, m.start() - 120): m.end() + 120].lower()
-                        if any(nf_kw in trecho for nf_kw in ("nota fiscal", "nf-e", "declarado", "produtos", "mercadoria")):
-                            continue
-                        if any(kw in trecho for kw in ("frete", "cotacao", "total geral", "valor total", "total do frete", "total frete", "prazo", "freight")):
-                            valor_frete = float(m.group(1).replace(".", "").replace(",", "."))
-                            break
+                    valor_frete = self._extrair_valor_frete_do_texto(body_norm)
 
                     if prazo_dias == 0 and body_norm:
                         m_prazo = re.search(r"(\d+)\s*(?:dias?|day|dia\(s\)|dias úteis)", body_norm, re.IGNORECASE)
@@ -1680,12 +1748,7 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
                         }""")
                         for txt in (result_data or []):
                             if valor_frete is None:
-                                for m in re.finditer(r"R\$\s*([\d.]+,\d{2})", txt):
-                                    sub = txt[max(0, m.start() - 100): m.end() + 100].lower()
-                                    if any(nf_kw in sub for nf_kw in ("nota fiscal", "nf-e", "declarado", "produtos", "mercadoria")):
-                                        continue
-                                    valor_frete = float(m.group(1).replace(".", "").replace(",", "."))
-                                    break
+                                valor_frete = self._extrair_valor_frete_do_texto(txt)
                             if prazo_dias == 0:
                                 m_prazo = re.search(r"(\d+)\s*(?:dias?|day|dia\(s\)|dias úteis)", txt, re.IGNORECASE)
                                 if m_prazo:
