@@ -1036,6 +1036,38 @@ def test_rodonaves_extrair_de_json_handles_strings_and_prioritizes_freight():
     assert prazo_addr == 0
 
 
+def test_rodonaves_extracao_prioriza_total_sobre_frete_peso():
+    texto = """
+    Valor total NF: R$ 287,20
+    Frete peso: R$ 56,72
+    GRIS: R$ 4,31
+    Pedágio: R$ 8,20
+    Total do frete: R$ 313,59
+    Prazo: 7 dias úteis
+    """
+
+    assert RodonavesProvider._extrair_valor_frete_do_texto(texto) == 313.59
+
+    valor, prazo = RodonavesProvider._extrair_de_json(
+        {
+            "FretePeso": "R$ 56,72",
+            "TotalFreight": "R$ 313,59",
+            "EletronicInvoiceValue": "R$ 287,20",
+            "Prazo": "7 dias úteis",
+        }
+    )
+
+    assert valor == 313.59
+    assert prazo == 7
+
+
+def test_rodonaves_extracao_nao_aceita_apenas_componentes_do_frete():
+    assert RodonavesProvider._extrair_valor_frete_do_texto("Frete peso: R$ 56,72") is None
+    assert RodonavesProvider._extrair_valor_frete_do_texto(
+        "Frete peso: R$ 56,72\nGRIS: R$ 4,31\nPedágio: R$ 8,20"
+    ) is None
+
+
 def test_rodonaves_submeter_ignores_auxiliary_cep_lookup_and_clicks_calcular():
     provider = RodonavesProvider("dom", "user", "senha", "12345678000190")
 
