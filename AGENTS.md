@@ -54,6 +54,7 @@ O app e standalone: nao ha servidor, licenciamento, configuracao remota, telemet
 - Prefira seletores robustos em automacoes Playwright: `name`, `placeholder`, `role`, texto visivel e labels. Evite classes geradas e `nth-child` quando houver alternativa.
 - Mantenha `last_error` informativo em fluxos que podem falhar e preserve cleanup de recursos externos como browser, context e page.
 - Antes de mexer em build/release, avaliar impacto em PyInstaller, Inno Setup, `app/version.txt`, updater, ZIP de update e `.github/workflows/build-release.yml`.
+- Quando Eduardo pedir "workflow", interpretar como pedido de nova versao publica: incrementar a versao, executar `build-release.yml` com `publish_release=true` e verificar release, instalador, ZIP e assinatura. Nao limitar o pedido ao `ci.yml`.
 - Nao remover validacao de assinatura de update nem mudar repositorio de releases sem autorizacao explicita.
 - Ao mover instrucoes antigas de agentes, use `backup-agent-instructions/` em vez de apagar diretamente quando houver conteudo reutilizavel.
 

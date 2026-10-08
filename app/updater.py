@@ -452,6 +452,52 @@ def _get_app_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
+def _directory_is_writable(path: Path) -> bool:
+    """Confirma permissao real de escrita no diretorio instalado."""
+    probe = path / f".fretio-update-write-{os.getpid()}"
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe.write_bytes(b"")
+        probe.unlink()
+        return True
+    except OSError:
+        try:
+            probe.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False
+
+
+def _launch_update_script(bat_path: Path, *, elevated: bool) -> None:
+    if elevated and os.name == "nt":
+        import ctypes
+
+        comspec = os.environ.get("COMSPEC", "cmd.exe")
+        parameters = f'/d /c ""{bat_path}""'
+        shell_execute = ctypes.windll.shell32.ShellExecuteW
+        shell_execute.restype = ctypes.c_void_p
+        result = shell_execute(
+            None,
+            "runas",
+            comspec,
+            parameters,
+            str(bat_path.parent),
+            0,
+        )
+        if int(result or 0) <= 32:
+            raise PermissionError(
+                "O Windows nao autorizou a instalacao. Aceite a janela de Controle de Conta de Usuario e tente novamente."
+            )
+        return
+
+    subprocess.Popen(
+        ["cmd", "/d", "/c", str(bat_path)],
+        creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
+        close_fds=True,
+    )
+
+
 def _download_with_progress(
     url: str,
     dest: Path,
@@ -572,10 +618,14 @@ def apply_update(
         # O version.txt vem do pacote ASSINADO (copiado pelo xcopy), então não é
         # reescrito com o valor da tag (que não passa por verificação de assinatura).
         backup_dir = update_dir / "backup"
+        apply_log_path = update_dir / "apply.log"
+        failure_file = update_dir / "_last_update_error.txt"
         restart_line = f'start "" "{app_exe}"\n' if app_exe else ""
         bat_content = f'''@echo off
 chcp 65001 >nul 2>&1
 title Fretio - Atualizando...
+set "UPDATE_LOG={apply_log_path}"
+echo [%DATE% %TIME%] Iniciando atualizacao v{safe_version}.>> "%UPDATE_LOG%"
 echo Aguardando Fretio fechar...
 
 :wait_loop
@@ -588,13 +638,16 @@ if %ERRORLEVEL% == 0 (
 echo Fretio fechou. Aplicando atualizacao v{safe_version}...
 timeout /t 2 /nobreak >nul
 
-if exist "{backup_dir}" rmdir /S /Q "{backup_dir}" >nul 2>&1
-xcopy /E /Y /I /Q "{app_dir}" "{backup_dir}" >nul 2>&1
+if exist "{backup_dir}" rmdir /S /Q "{backup_dir}" >> "%UPDATE_LOG%" 2>&1
+xcopy /E /Y /I /Q "{app_dir}" "{backup_dir}" >> "%UPDATE_LOG%" 2>&1
+if errorlevel 1 goto backup_failed
 
-xcopy /E /Y /I /Q "{source_dir}" "{app_dir}" >nul 2>&1
+xcopy /E /Y /I /Q "{source_dir}" "{app_dir}" >> "%UPDATE_LOG%" 2>&1
 if errorlevel 1 goto rollback
 
 echo Atualizacao concluida! Reiniciando...
+echo [%DATE% %TIME%] Atualizacao concluida com sucesso.>> "%UPDATE_LOG%"
+del /Q "{failure_file}" >nul 2>&1
 timeout /t 1 /nobreak >nul
 
 del /Q "{zip_path}" >nul 2>&1
@@ -606,10 +659,19 @@ exit
 
 :rollback
 echo Falha ao aplicar atualizacao. Restaurando versao anterior...
-xcopy /E /Y /I /Q "{backup_dir}" "{app_dir}" >nul 2>&1
+echo [%DATE% %TIME%] Falha ao copiar os novos arquivos; restaurando backup.>> "%UPDATE_LOG%"
+> "{failure_file}" echo Nao foi possivel gravar os arquivos da atualizacao. Execute novamente e aceite a autorizacao do Windows.
+xcopy /E /Y /I /Q "{backup_dir}" "{app_dir}" >> "%UPDATE_LOG%" 2>&1
 del /Q "{zip_path}" >nul 2>&1
 rmdir /S /Q "{extract_dir}" >nul 2>&1
 rmdir /S /Q "{backup_dir}" >nul 2>&1
+{restart_line}del "%~f0" >nul 2>&1
+exit
+
+:backup_failed
+echo Falha ao preparar backup da instalacao atual.
+echo [%DATE% %TIME%] Falha ao preparar backup da instalacao atual.>> "%UPDATE_LOG%"
+> "{failure_file}" echo Nao foi possivel acessar a pasta instalada. Execute novamente e aceite a autorizacao do Windows.
 {restart_line}del "%~f0" >nul 2>&1
 exit
 '''
@@ -676,13 +738,18 @@ def restart_app() -> None:
             # CREATE_NO_WINDOW: cria console oculto para cmd.exe rodar o .bat
             # CREATE_NEW_PROCESS_GROUP: garante que o processo sobrevive ao pai
             # NÃO usar DETACHED_PROCESS junto, pois bloqueia o console do cmd
-            subprocess.Popen(
-                ["cmd", "/c", bat_path],
-                creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-                | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
-                close_fds=True,
+            app_dir = _get_app_dir()
+            elevated = not _directory_is_writable(app_dir)
+            _log(
+                "Iniciando script de update | bat=%s | app_dir=%s | elevacao=%s",
+                bat_path,
+                app_dir,
+                elevated,
             )
-        pending_file.unlink(missing_ok=True)
+            _launch_update_script(Path(bat_path), elevated=elevated)
+            pending_file.unlink(missing_ok=True)
+        else:
+            raise FileNotFoundError(f"Script de atualizacao pendente nao encontrado: {bat_path}")
 
     # Fecha o app
     sys.exit(0)
