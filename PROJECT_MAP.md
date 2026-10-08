@@ -123,11 +123,12 @@ Fluxo:
 1. Descobre a versao mais recente via GitHub Releases (`release/latest` do `github_repo`, com `github_repo_aliases` como fallback historico).
 2. Baixa ZIP de update.
 3. Valida estrutura e assinatura do ZIP.
-4. Aplica update e reinicia quando necessario.
+4. Aplica update e reinicia quando necessario; instalacoes em pasta protegida solicitam elevacao do Windows somente na etapa de copia.
 
 Cuidados:
 
 - Nao remover validacao de assinatura/estrutura de update.
+- O update pendente permanece disponivel quando a autorizacao do Windows falha, e a aplicacao e registrada em `%APPDATA%\Fretio\update\apply.log`.
 - Antes de mexer em update, avaliar impacto em PyInstaller, Inno Setup, ZIP, `version.txt` e workflow.
 
 ## Cotacao: fachada e modulo novo
@@ -323,6 +324,7 @@ Fluxo atual do workflow `Build and Release Fretio`:
 - Execucao manual via `workflow_dispatch` com input obrigatorio `version` (`X.Y` ou `X.Y.Z`).
 - `publish_release=true` publica no proprio repositorio com o `GITHUB_TOKEN` automatico e exige `UPDATE_SIGNING_PRIVATE_KEY_B64` e `UPDATE_PUBLIC_KEY_B64`. `RELEASES_TOKEN` so e necessario para publicar em um repositorio diferente (`RELEASE_REPO`).
 - `publish_release=false` serve apenas para artefato interno; se faltar assinatura, exige `ALLOW_UNSIGNED_DEV_RELEASE=true` e nao publica release externa.
+- Quando Eduardo pedir "workflow", o fluxo esperado e uma nova versao oficial com `publish_release=true`, seguida da verificacao dos assets publicados.
 
 Cuidados:
 

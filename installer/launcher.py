@@ -77,6 +77,7 @@ PREFERRED_UPDATE_ASSET_NAMES = (
     "romaneiobeta-update-latest.zip",
 )
 LOG_PATH = _APPDATA_ROOT / "Fretio" / "launcher.log"
+_ELEVATED_UPDATE_ARG = "--fretio-elevated-update"
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -144,6 +145,56 @@ def _resolve_app_exe(app_dir: Path) -> Path:
         if candidate.exists():
             return candidate
     return app_dir / APP_EXE_NAMES[0]
+
+
+def _directory_is_writable(path: Path) -> bool:
+    probe = path / f".fretio-launcher-write-{os.getpid()}"
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe.write_bytes(b"")
+        probe.unlink()
+        return True
+    except OSError:
+        try:
+            probe.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False
+
+
+def _launch_self_elevated() -> bool:
+    if os.name != "nt" or not getattr(sys, "frozen", False):
+        return False
+
+    import ctypes
+
+    executable = str(Path(sys.executable).resolve())
+    shell_execute = ctypes.windll.shell32.ShellExecuteW
+    shell_execute.restype = ctypes.c_void_p
+    result = shell_execute(
+        None,
+        "runas",
+        executable,
+        _ELEVATED_UPDATE_ARG,
+        str(Path(executable).parent),
+        1,
+    )
+    return int(result or 0) > 32
+
+
+def _ensure_writable_update_target(app_dir: Path) -> bool:
+    if _directory_is_writable(app_dir):
+        return True
+    if _ELEVATED_UPDATE_ARG in sys.argv:
+        raise PermissionError(
+            f"Mesmo com autorizacao do Windows, nao foi possivel gravar em {app_dir}."
+        )
+    if _launch_self_elevated():
+        _log("Launcher reiniciado com elevacao para atualizar %s", app_dir)
+        return False
+    raise PermissionError(
+        "A atualizacao precisa de autorizacao do Windows. Aceite a janela de Controle de Conta de Usuario e tente novamente."
+    )
 
 
 def _validate_zip_member_name(name: str) -> str:
@@ -535,6 +586,11 @@ def _worker(win: "_Window | None") -> None:
             raise FileNotFoundError(
                 f"Release remota encontrada, mas nenhum asset ZIP de update foi localizado. Log: {LOG_PATH}"
             )
+
+        if needs_dl and zip_asset and not _ensure_writable_update_target(app_dir):
+            if win:
+                win.close()
+            return
 
         installed = False
         if needs_dl and zip_asset:

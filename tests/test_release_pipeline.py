@@ -4,6 +4,8 @@ from io import BytesIO
 from urllib.error import HTTPError
 import zipfile
 
+import pytest
+
 
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "app"))
@@ -200,6 +202,54 @@ def test_apply_update_does_not_create_bat_for_incomplete_zip(monkeypatch, tmp_pa
     assert not (update_dir / "_pending_update").exists()
 
 
+def test_restart_app_requests_elevation_for_protected_install(monkeypatch, tmp_path):
+    update_dir = tmp_path / "update"
+    update_dir.mkdir()
+    bat_path = update_dir / "_apply_update.bat"
+    bat_path.write_text("@echo off", encoding="utf-8")
+    pending_file = update_dir / "_pending_update"
+    pending_file.write_text(str(bat_path), encoding="utf-8")
+    launched = []
+
+    monkeypatch.setattr(updater, "_license_dir_update", lambda: update_dir)
+    monkeypatch.setattr(updater, "_get_app_dir", lambda: tmp_path / "protected-app")
+    monkeypatch.setattr(updater, "_directory_is_writable", lambda _path: False)
+    monkeypatch.setattr(
+        updater,
+        "_launch_update_script",
+        lambda path, *, elevated: launched.append((path, elevated)),
+    )
+
+    with pytest.raises(SystemExit):
+        updater.restart_app()
+
+    assert launched == [(bat_path, True)]
+    assert not pending_file.exists()
+
+
+def test_restart_app_keeps_pending_update_when_elevation_fails(monkeypatch, tmp_path):
+    update_dir = tmp_path / "update"
+    update_dir.mkdir()
+    bat_path = update_dir / "_apply_update.bat"
+    bat_path.write_text("@echo off", encoding="utf-8")
+    pending_file = update_dir / "_pending_update"
+    pending_file.write_text(str(bat_path), encoding="utf-8")
+
+    monkeypatch.setattr(updater, "_license_dir_update", lambda: update_dir)
+    monkeypatch.setattr(updater, "_get_app_dir", lambda: tmp_path / "protected-app")
+    monkeypatch.setattr(updater, "_directory_is_writable", lambda _path: False)
+    monkeypatch.setattr(
+        updater,
+        "_launch_update_script",
+        lambda _path, *, elevated: (_ for _ in ()).throw(PermissionError("negado")),
+    )
+
+    with pytest.raises(PermissionError, match="negado"):
+        updater.restart_app()
+
+    assert pending_file.exists()
+
+
 def test_launcher_resolves_valid_legacy_executable(monkeypatch, tmp_path):
     app_dir = tmp_path / "Romaneio Beta"
     app_dir.mkdir()
@@ -209,6 +259,23 @@ def test_launcher_resolves_valid_legacy_executable(monkeypatch, tmp_path):
 
     assert launcher._resolve_app_dir() == app_dir
     assert launcher._resolve_app_exe(app_dir) == app_dir / "FreteBot.exe"
+
+
+def test_launcher_relaunches_elevated_for_protected_install(monkeypatch, tmp_path):
+    monkeypatch.setattr(launcher, "_directory_is_writable", lambda _path: False)
+    monkeypatch.setattr(launcher, "_launch_self_elevated", lambda: True)
+    monkeypatch.setattr(launcher.sys, "argv", ["Romaneio.exe"])
+
+    assert launcher._ensure_writable_update_target(tmp_path / "protected-app") is False
+
+
+def test_launcher_reports_refused_elevation(monkeypatch, tmp_path):
+    monkeypatch.setattr(launcher, "_directory_is_writable", lambda _path: False)
+    monkeypatch.setattr(launcher, "_launch_self_elevated", lambda: False)
+    monkeypatch.setattr(launcher.sys, "argv", ["Romaneio.exe"])
+
+    with pytest.raises(PermissionError, match="autorizacao do Windows"):
+        launcher._ensure_writable_update_target(tmp_path / "protected-app")
 
 
 def test_launcher_opens_valid_local_app_when_github_is_offline(monkeypatch, tmp_path):

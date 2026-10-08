@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.69 - 2026-10-08
+
+- RODONAVES: corrige a leitura do resultado para priorizar o total final da cotacao e rejeitar componentes isolados como frete-peso, GRIS, pedagio e taxas.
+- ATUALIZACAO: solicita autorizacao do Windows ao atualizar instalacoes em pastas protegidas, preserva a tentativa pendente quando a autorizacao falha e registra a aplicacao para diagnostico.
+- LAUNCHER: reinicia com elevacao somente quando necessario para gravar no diretorio instalado.
+
 ## 2.65 - 2026-08-17
 
 - RODONAVES: correção crítica na extração do resultado de cotação — isolamento de chamadas AJAX auxiliares de CEP/cliente para não anular o clique no botão Calcular, suporte a formatos de frete monetário em string/HTML e proteção contra captura do valor da nota fiscal.

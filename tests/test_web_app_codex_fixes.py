@@ -182,6 +182,29 @@ def test_startup_aplicar_update_no_update_returns_error_without_exit():
     assert r.get("ok") is False
 
 
+def test_startup_aplicar_update_reports_restart_failure_without_closing(monkeypatch):
+    import updater
+
+    monkeypatch.setattr(updater, "apply_update", lambda info, callback=None: True)
+    monkeypatch.setattr(
+        updater,
+        "restart_app",
+        lambda: (_ for _ in ()).throw(PermissionError("autorizacao negada")),
+    )
+    monkeypatch.setattr(
+        web_app.os,
+        "_exit",
+        lambda code: (_ for _ in ()).throw(AssertionError(f"nao deveria sair: {code}")),
+    )
+    api = _api()
+    api._update_info = object()
+
+    result = api.startup_aplicar_update()
+
+    assert result["ok"] is False
+    assert "autorizacao negada" in result["erro"]
+
+
 # --- Fix [P2]: cards de NF-e sobrevivem à navegação (reload do backend) --------
 
 def test_nfe_cards_rebuilds_from_notas(monkeypatch):

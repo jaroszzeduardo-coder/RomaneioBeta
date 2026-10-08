@@ -56,8 +56,11 @@ class StartupMixin:
                 restart_app()  # lança o .bat
             except SystemExit:
                 pass           # o sys.exit(0) interno não mata o processo aqui
-            except Exception:
-                pass
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "erro": f"A atualiza��o foi baixada, mas a instala��o não iniciou: {exc}",
+                }
             try:
                 self._teardown()  # fecha Chrome/Playwright antes de sair
             except Exception:
