@@ -109,6 +109,12 @@ class CoopexProvider(ProviderBase):
                     login_ok = True
                     break
             if not login_ok:
+                blocked = self._page.get_by_text("Usuário sem acesso liberado", exact=False)
+                if await blocked.count() and await blocked.first.is_visible():
+                    raise RuntimeError(
+                        "COOPEX: usuário sem acesso liberado no SSW. Solicite uma nova "
+                        "senha ao Usuário Master e atualize a configuração da transportadora."
+                    )
                 raise Exception(f"Login falhou, URL: {self._page.url}")
 
             logger.info(f"[{self.nome}] Login OK")

@@ -884,6 +884,71 @@ def test_coopex_classifies_name_not_resolved_as_temporary_network_error():
     assert CoopexProvider._is_temporary_network_error("net::ERR_NAME_NOT_RESOLVED") is True
 
 
+def test_rodonaves_modern_result_selects_road_freight_not_air_options():
+    text = (
+        "Valor total NF (R$) *\nComposição do frete\n\n"
+        "Rodoviário\n\nR$\u00a01.234,56\nPrazo: até 4 dias úteis\n"
+        "Rodoaéreo Econômico aéreo\nR$ 12.345,67\nPrazo: até 2 dias úteis\n"
+        "Rodoaéreo Expresso aéreo\nR$ 23.456,78\nPrazo: até 1 dia útil\n"
+        "Valor do frete\nR$ 1.234,56\nPrazo: até 4 dias úteis"
+    )
+    assert RodonavesProvider._extrair_valor_frete_do_texto(text) == 1234.56
+
+
+def test_rodonaves_modern_result_requires_price_and_deadline_for_road_option():
+    text = (
+        "Composição do frete\nRodoviário\nIndisponível\n"
+        "Rodoaéreo Econômico aéreo\nR$ 12.345,67\nPrazo: até 2 dias úteis\n"
+    )
+    assert RodonavesProvider._extrair_valor_frete_do_texto(text) is None
+
+
+def test_coopex_login_reports_account_block_without_exposing_credentials():
+    class Locator:
+        @property
+        def first(self):
+            return self
+
+        async def wait_for(self, **kwargs):
+            pass
+
+        async def fill(self, value):
+            pass
+
+        async def click(self):
+            pass
+
+        async def count(self):
+            return 1
+
+        async def is_visible(self):
+            return True
+
+    class Page(_FakePage):
+        url = CoopexProvider.LOGIN_URL
+
+        async def goto(self, *args, **kwargs):
+            pass
+
+        def locator(self, selector):
+            return Locator()
+
+        def get_by_text(self, text, **kwargs):
+            assert text == "Usuário sem acesso liberado"
+            return Locator()
+
+    async def run_test():
+        provider = CoopexProvider("CLD", "private-user", "private-password")
+        provider._page = Page()
+        with pytest.raises(RuntimeError, match="Usuário Master"):
+            await provider._login()
+        assert not provider._logged_in
+        assert "private-user" not in provider.last_error
+        assert "private-password" not in provider.last_error
+
+    asyncio.run(run_test())
+
+
 def test_alfa_navegar_para_cotacao_detects_ready_form_without_navigation():
     from fretio.providers.alfa import AlfaProvider
 
