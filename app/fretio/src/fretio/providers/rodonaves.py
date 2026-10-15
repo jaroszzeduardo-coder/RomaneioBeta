@@ -710,6 +710,16 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
         lines = [re.sub(r"\s+", " ", line).strip() for line in raw.splitlines()]
         text = "\n".join(line for line in lines if line)
 
+        road_result = re.search(
+            r"(?i)\bComposi[çc][ãa]o do frete\s+Rodovi[áa]rio\s+"
+            r"R\$\s*([\d.]+,\d{2})\s+Prazo:\s*at[ée]\s+\d+\s+dias?",
+            text,
+        )
+        if road_result:
+            return cls._parse_valor_monetario(road_result.group(1))
+        if re.search(r"(?i)\bComposi[çc][ãa]o do frete\b", text):
+            return None
+
         total_labels = (
             r"valor\s+total(?:\s+(?:do\s+)?frete)?",
             r"total\s+(?:do\s+)?frete",

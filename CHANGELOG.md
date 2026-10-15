@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.70 - 2026-10-15
+
+- RODONAVES: reconhece os cartões do portal atual e seleciona o valor rodoviário, sem confundir as opções aéreas com o frete solicitado.
+- COOPEX: informa quando o SSW bloqueia o acesso do usuário e orienta a solicitar nova senha ao Usuário Master.
+
 ## 2.69 - 2026-10-08
 
 - RODONAVES: corrige a leitura do resultado para priorizar o total final da cotacao e rejeitar componentes isolados como frete-peso, GRIS, pedagio e taxas.
