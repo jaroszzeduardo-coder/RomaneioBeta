@@ -1,6 +1,5 @@
 """Mixin de diagnóstico/lifecycle do provider Rodonaves (métodos movidos de rodonaves.py)."""
 from typing import Any
-import json
 import re
 from fretio.logging_conf import get_logger
 
@@ -157,12 +156,15 @@ class RodonavesDiagnosticsMixin:
                 "captcha_token_len",
                 "form_present",
                 "result_present",
+                "road_option_present",
+                "road_price_present",
+                "road_deadline_present",
             ):
                 value = snapshot.get(key)
                 if value not in (None, "", []):
                     flags.append(f"{key}={value}")
             if flags:
-                suffix = " | diagnostico: " + "; ".join(flags[:8])
+                suffix = " | diagnostico: " + "; ".join(flags)
         self.last_error = f"{message} (stage={stage_name}; headless={self._effective_headless}){suffix}"
 
     async def _capture_safe_diagnostic_snapshot(
@@ -214,13 +216,16 @@ class RodonavesDiagnosticsMixin:
                     return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
                 };
                 const captchaToken = document.querySelector('textarea[name="g-recaptcha-response"]');
+                const roadSection = (text.match(/Rodovi[áa]rio([\s\S]*?)(?=Rodoa[ée]reo|$)/i) || [])[1] || '';
                 return {
-                    bodyText: text.slice(0, 2500),
-                    alertText: alertText.slice(0, 1000),
-                    formPresent: !!document.querySelector('#ReceiverTaxId'),
-                    calculateButtonPresent: !!document.querySelector('#calculateQuotationBtn'),
-                    calculateButtonVisible: visible('#calculateQuotationBtn'),
-                    resultPresent: !!document.querySelector('td.col-result, #quotationResult'),
+                    alertPresent: !!alertText,
+                    formPresent: !!document.querySelector('#ReceiverTaxId, #senderTaxId'),
+                    calculateButtonPresent: !!document.querySelector('#calculateQuotationBtn') || Array.from(document.querySelectorAll('button')).some(el => el.textContent && el.textContent.trim() === 'Cotar frete'),
+                    calculateButtonVisible: visible('#calculateQuotationBtn') || Array.from(document.querySelectorAll('button')).some(el => el.textContent && el.textContent.trim() === 'Cotar frete' && el.getBoundingClientRect().width > 0),
+                    resultPresent: !!document.querySelector('td.col-result, #quotationResult') || /Composi[çc][ãa]o do frete/.test(text),
+                    roadOptionPresent: /Rodovi[áa]rio/.test(text),
+                    roadPricePresent: /R\$\s*[\d.]+,\d{2}/.test(roadSection),
+                    roadDeadlinePresent: /Prazo:\s*at[ée]\s+\d+\s+dias?/i.test(roadSection),
                     recaptchaFrames: document.querySelectorAll('iframe[title*="reCAPTCHA"], iframe[src*="recaptcha"]').length,
                     captchaTokenLen: captchaToken && captchaToken.value ? captchaToken.value.length : 0,
                 };
@@ -233,19 +238,22 @@ class RodonavesDiagnosticsMixin:
                     "result_present": bool(dom_state.get("resultPresent")),
                     "recaptcha_frames": int(dom_state.get("recaptchaFrames") or 0),
                     "captcha_token_len": int(dom_state.get("captchaTokenLen") or 0),
-                    "alert_excerpt": self._safe_diagnostic_excerpt(dom_state.get("alertText"), limit=500),
-                    "body_excerpt": self._safe_diagnostic_excerpt(dom_state.get("bodyText"), limit=900),
+                    "alert_present": bool(dom_state.get("alertPresent", dom_state.get("alertText"))),
+                    "road_option_present": bool(dom_state.get("roadOptionPresent")),
+                    "road_price_present": bool(dom_state.get("roadPricePresent")),
+                    "road_deadline_present": bool(dom_state.get("roadDeadlinePresent")),
                 })
         except Exception as exc:
             snapshot["snapshot_error"] = self._safe_diagnostic_excerpt(exc, limit=180)
         if api_result:
-            snapshot["api_url"] = str(api_result.get("url") or "")[:240]
+            snapshot["api_url"] = str(api_result.get("url") or "").split("?", 1)[0][:240]
             if "json" in api_result:
                 snapshot["api_kind"] = "json"
-                snapshot["api_excerpt"] = self._safe_diagnostic_excerpt(json.dumps(api_result.get("json"), ensure_ascii=False), limit=700)
+                data = api_result.get("json")
+                snapshot["api_key_envelope"] = isinstance(data, dict) and set(data) == {"key"}
+                snapshot["api_field_count"] = len(data) if isinstance(data, dict) else 0
             elif "text" in api_result:
                 snapshot["api_kind"] = "text"
-                snapshot["api_excerpt"] = self._safe_diagnostic_excerpt(api_result.get("text"), limit=700)
         self._diagnostic_context["rodonaves_snapshot"] = snapshot
         logger.info(f"[{self.nome}] Diagnóstico seguro Rodonaves ({reason}): {snapshot}")
         return snapshot

@@ -230,7 +230,7 @@ Observacao operacional:
 - O numero do endereco de destino extraido do romaneio colado e enviado ao formulario atual da Rodonaves.
 - Rodonaves deve abrir primeiro o portal oficial (`login_url` configurado ou `https://rodonaves.com.br/portaldocliente`) para estabelecer sessão/login; `https://rodonaves.com.br/cotacao` é o destino de cotação. URLs antigas de `cliente.rte.com.br`, `sistema.rte.com.br`, `/Quotation` e SSW são tratadas como legadas.
 - Na leitura do resultado da Rodonaves, o total final tem prioridade sobre parcelas como frete-peso, GRIS, pedágio e taxas; respostas contendo apenas componentes não devem virar cotação válida.
-- Rodonaves: o portal atual apresenta cartões Rodoviário e Rodoaéreo em Composição do frete; a extração deve selecionar o total rodoviário, sem usar preços aéreos como fallback.
+- Rodonaves: o portal atual apresenta cartões Rodoviário e Rodoaéreo em Composição do frete; a extração deve selecionar o total rodoviário, sem usar preços aéreos como fallback. A resposta inicial de `/api/quotations/create` pode conter apenas uma chave; o valor é lido do cartão após a renderização.
 - Coopex: o SSW pode bloquear o usuário com a mensagem de acesso não liberado; é necessário solicitar nova senha ao Usuário Master e atualizar a configuração local.
 - Rodonaves roda em Chrome real conectado por CDP com `user-data-dir` exclusivo `~/.fretio/rodonaves_browser_data`; com `headless=true`, o portal atual executa sem abrir janela e preserva o mesmo browser/context/page durante a cotação.
 - `alfa`: `login`, `senha`

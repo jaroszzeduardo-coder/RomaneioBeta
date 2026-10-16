@@ -710,14 +710,17 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
         lines = [re.sub(r"\s+", " ", line).strip() for line in raw.splitlines()]
         text = "\n".join(line for line in lines if line)
 
-        road_result = re.search(
-            r"(?i)\bComposi[çc][ãa]o do frete\s+Rodovi[áa]rio\s+"
-            r"R\$\s*([\d.]+,\d{2})\s+Prazo:\s*at[ée]\s+\d+\s+dias?",
-            text,
-        )
-        if road_result:
-            return cls._parse_valor_monetario(road_result.group(1))
-        if re.search(r"(?i)\bComposi[çc][ãa]o do frete\b", text):
+        composition = re.search(r"(?i)\bComposi[çc][ãa]o do frete\b", text)
+        if composition:
+            road = re.search(r"(?i)\bRodovi[áa]rio\b", text[composition.end():])
+            if road:
+                road_start = composition.end() + road.end()
+                next_option = re.search(r"(?i)\bRodoa[ée]reo\b", text[road_start:])
+                road_text = text[road_start:road_start + next_option.start()] if next_option else text[road_start:]
+                price = re.search(r"R\$\s*([\d.]+,\d{2})", road_text)
+                deadline = re.search(r"(?i)\bPrazo:\s*at[ée]\s+\d+\s+dias?", road_text)
+                if price and deadline and price.start() < deadline.start():
+                    return cls._parse_valor_monetario(price.group(1))
             return None
 
         total_labels = (
@@ -1503,7 +1506,8 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
                         detected = await page.evaluate(r"""() => {
                             if (document.querySelectorAll('td.col-result, .col-result').length > 0) return true;
                             const bodyText = document.body ? document.body.innerText : '';
-                            if (bodyText.includes('Prazo: até') && /R\$\s*[\d.]+,\d{2}/.test(bodyText)) return true;
+                            const road = (bodyText.match(/Rodovi[áa]rio([\s\S]*?)(?=Rodoa[ée]reo|$)/i) || [])[1] || '';
+                            if (/R\$\s*[\d.]+,\d{2}/.test(road) && /Prazo:\s*at[ée]\s+\d+\s+dias?/i.test(road)) return true;
                             const qr = document.getElementById('quotationResult') || document.querySelector('[id*="quotationResult" i], [id*="Result" i]');
                             if (qr && qr.innerText && qr.innerText.trim().length > 30) {
                                 const t = qr.innerText.toLowerCase();
@@ -1626,7 +1630,8 @@ class RodonavesProvider(RodonavesBrowserMixin, RodonavesDiagnosticsMixin, Provid
                     has_result = await page.evaluate(r"""() => {
                         if (document.querySelectorAll('td.col-result, .col-result').length > 0) return 'col-result';
                         const bodyText = document.body ? document.body.innerText : '';
-                        if (bodyText.includes('Prazo: até') && /R\$\s*[\d.]+,\d{2}/.test(bodyText)) return 'portal-atual';
+                        const road = (bodyText.match(/Rodovi[áa]rio([\s\S]*?)(?=Rodoa[ée]reo|$)/i) || [])[1] || '';
+                        if (/R\$\s*[\d.]+,\d{2}/.test(road) && /Prazo:\s*at[ée]\s+\d+\s+dias?/i.test(road)) return 'portal-atual';
                         const qr = document.getElementById('quotationResult') || document.querySelector('[id*="quotationResult" i], [id*="Result" i]');
                         if (qr && qr.innerText && qr.innerText.trim().length > 30) {
                             const t = qr.innerText.toLowerCase();
