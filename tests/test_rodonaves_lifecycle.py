@@ -233,11 +233,26 @@ def test_rodonaves_safe_diagnostic_snapshot_redacts_documents():
 
         assert snapshot["form_present"] is True
         assert snapshot["recaptcha_frames"] == 1
-        assert "12345678000190" not in snapshot["body_excerpt"]
-        assert "12345678000190" not in snapshot["alert_excerpt"]
-        assert "12345678000190" not in snapshot["api_excerpt"]
-        assert "***" in snapshot["body_excerpt"]
+        assert "body_excerpt" not in snapshot
+        assert "alert_excerpt" not in snapshot
+        assert "api_excerpt" not in snapshot
+        assert snapshot["alert_present"] is True
         assert provider._diagnostic_context["rodonaves_snapshot"] is snapshot
+
+    asyncio.run(run())
+
+
+def test_rodonaves_diagnostic_does_not_store_quotation_key():
+    async def run():
+        provider = _provider()
+        provider._page = FakeDiagnosticPage()
+        snapshot = await provider._capture_safe_diagnostic_snapshot(
+            reason="valor_frete_nao_encontrado",
+            api_result={"json": {"key": "sensitive-quotation-key"}, "url": "https://rodonaves.com.br/api/quotations/create"},
+        )
+        assert snapshot["api_key_envelope"] is True
+        assert "sensitive-quotation-key" not in str(snapshot)
+        assert "body_excerpt" not in snapshot
 
     asyncio.run(run())
 

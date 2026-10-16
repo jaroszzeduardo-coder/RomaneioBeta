@@ -895,6 +895,15 @@ def test_rodonaves_modern_result_selects_road_freight_not_air_options():
     assert RodonavesProvider._extrair_valor_frete_do_texto(text) == 1234.56
 
 
+def test_rodonaves_modern_result_accepts_extra_text_before_road_card():
+    text = (
+        "Composição do frete\nEscolha uma modalidade\n"
+        "Modalidade Rodoviário\nEntrega convencional\nR$ 123,45\nPrazo: até 5 dias úteis\n"
+        "Rodoaéreo Expresso aéreo\nR$ 999,99\nPrazo: até 1 dia útil"
+    )
+    assert RodonavesProvider._extrair_valor_frete_do_texto(text) == 123.45
+
+
 def test_rodonaves_modern_result_requires_price_and_deadline_for_road_option():
     text = (
         "Composição do frete\nRodoviário\nIndisponível\n"

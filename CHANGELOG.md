@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.71 - 2026-10-16
+
+- RODONAVES: aceita texto adicional no cartao Rodoviario do portal atual e aguarda o preco dessa modalidade antes de concluir a cotacao.
+- RODONAVES: registra apenas indicadores do resultado no diagnostico, sem gravar a chave retornada pela API nem trechos com dados da pagina.
+
 ## 2.70 - 2026-10-15
 
 - RODONAVES: reconhece os cartões do portal atual e seleciona o valor rodoviário, sem confundir as opções aéreas com o frete solicitado.
