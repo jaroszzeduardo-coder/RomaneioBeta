@@ -137,6 +137,8 @@ _TIMEOUT_COTACAO_S: dict[str, int] = {
     # SSW providers: polling até 25s + fallbacks → dar margem para completar internamente
     "COOPEX": 90,
     "EUCATUR": 90,
+    # Login pode esperar o captcha da Braspress e ainda preencher a cotação.
+    "BRASPRESS": 300,
 }
 _TIMEOUT_COTACAO_PADRAO_S = 45
 
@@ -146,6 +148,7 @@ _TIMEOUT_PRELOGIN_S: dict[str, int] = {
     "TRANSLOVATO": 90,
     "RODONAVES": 60,
     "AGEX": 60,
+    "BRASPRESS": 150,
 }
 _TIMEOUT_PRELOGIN_PADRAO_S = 45
 

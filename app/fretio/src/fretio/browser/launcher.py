@@ -42,6 +42,37 @@ class _ChromeBrowser:
         except Exception:
             pass
 
+    def debug_port(self) -> int | None:
+        args = getattr(self._process, "args", None) or []
+        if isinstance(args, str):
+            args = [args]
+        for arg in args:
+            text = str(arg)
+            if text.startswith("--remote-debugging-port="):
+                try:
+                    return int(text.split("=", 1)[1])
+                except ValueError:
+                    return None
+        return None
+
+    async def detach(self):
+        """Desconecta o Playwright e deixa o Chrome aberto para interação humana."""
+        proc = self._process
+        profile = self._profile_dir
+        port = self.debug_port()
+        self._process = None
+        try:
+            await self._inner.close()
+        except Exception:
+            pass
+        if self._owned_pw:
+            try:
+                await self._owned_pw.stop()
+            except Exception:
+                pass
+            self._owned_pw = None
+        return proc, profile, port
+
     async def close(self):
         try:
             await self._inner.close()
@@ -59,6 +90,38 @@ class _ChromeBrowser:
             shutil.rmtree(self._profile_dir, ignore_errors=True)
         except Exception:
             pass
+
+
+def launch_human_chrome(url: str):
+    """Abre o Chrome visível, sem Playwright, para a pessoa resolver um captcha.
+
+    A janela já nasce no tamanho normal. Flags de automação ficam de fora:
+    o Turnstile da Braspress fica vermelho quando o Chrome nasce controlado.
+    """
+    if browser_shutdown_requested():
+        raise RuntimeError("Encerramento do aplicativo em andamento; novos browsers estao bloqueados")
+    chrome_path = find_chrome()
+    port = _find_free_port()
+    profile_dir = tempfile.mkdtemp(prefix="fretio_braspress_")
+    # Sem --do-not-de-elevate o Chrome deste processo reabre o Chrome do
+    # usuário, descarta o perfil novo e a porta de depuração nunca sobe.
+    # O job do app também fica de fora: ele quebra o sandbox e o visto volta vermelho.
+    proc = subprocess.Popen(
+        [
+            chrome_path,
+            f"--remote-debugging-port={port}",
+            f"--user-data-dir={profile_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--do-not-de-elevate",
+            "--window-size=980,760",
+            "--window-position=200,80",
+            url,
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return proc, port, profile_dir
 
 
 async def launch_browser_resilient(playwright=None, *, headless: bool = True, args: list[str] | None = None):

@@ -80,6 +80,7 @@ _TRANSIENT_PATTERNS = (
     # Antifraude / captcha do portal e portal que não terminou de carregar.
     "recaptcha não resolvido",
     "recaptcha nao resolvido",
+    "captcha da braspress",
     "bloqueio antifraude",
     "jquery não carregou",
     "jquery nao carregou",
@@ -131,6 +132,7 @@ _PRELOGIN_CONTROLLED_PATTERNS = (
     "nao confirmou acesso",
     "jquery não carregou",
     "jquery nao carregou",
+    "captcha da braspress",
     "timeout",
     "timed out",
     "net::err",

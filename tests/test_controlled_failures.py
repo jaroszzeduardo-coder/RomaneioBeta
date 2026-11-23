@@ -28,6 +28,14 @@ class TestTransientResultFailures:
         detalhe = "Rodonaves: reCAPTCHA não resolvido ou bloqueio antifraude impediu a cotação"
         assert _is_expected_transient_failure_str(detalhe)
 
+    def test_braspress_captcha_nao_resolvido(self):
+        detalhe = (
+            "Login falhou: captcha da Braspress não resolvido. "
+            "Conclua o desafio na janela do Chrome e tente a cotação de novo."
+        )
+        assert _is_expected_transient_failure_str(detalhe)
+        assert is_expected_prelogin_failure(detalhe)
+
     def test_rodonaves_jquery_nao_carregou(self):
         detalhe = "Login Rodonaves falhou — jQuery não carregou (URL: https://cliente.rte.com.br)"
         assert _is_expected_transient_failure_str(detalhe)

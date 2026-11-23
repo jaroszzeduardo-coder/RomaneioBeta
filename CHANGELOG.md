@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.72 - 2026-11-23
+
+- BRASPRESS: o login com o visto "Confirme que é humano" abre um Chrome normal, e a cotação continua nessa mesma aba depois do acesso.
+
 ## 2.71 - 2026-10-16
 
 - RODONAVES: aceita texto adicional no cartao Rodoviario do portal atual e aguarda o preco dessa modalidade antes de concluir a cotacao.
