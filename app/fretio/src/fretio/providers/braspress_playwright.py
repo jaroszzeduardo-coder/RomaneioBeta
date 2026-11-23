@@ -1,6 +1,8 @@
 """Provider Braspress - Versão com Playwright para contornar antibot."""
 from datetime import datetime
 from typing import Optional
+import asyncio
+import json
 import re
 
 from playwright.async_api import async_playwright
@@ -22,6 +24,8 @@ class BraspressPlaywrightProvider(BraspressBrowserMixin, ProviderBase):
 
     LOGIN_URL = "https://www.braspress.com.br/w/cliente/view"
     COTACAO_URL = "https://www.braspress.com.br/w/cotacao/view"
+    _TURNSTILE_AUTO_S = 8
+    _TURNSTILE_USUARIO_S = 180
     _digits = staticmethod(_digits)
     _fmt_decimal = staticmethod(_fmt_decimal)
     _parse_decimal_any = staticmethod(_parse_decimal_any)
@@ -38,6 +42,10 @@ class BraspressPlaywrightProvider(BraspressBrowserMixin, ProviderBase):
         self._context = None
         self._page = None
         self._logged_in = False
+        self._captcha_visivel = False
+        self._janela_captcha_aberta = False
+        self._login_lock = asyncio.Lock()
+        self._passo_atual = "inicio"
 
     @staticmethod
     def _normalizar_cubagens_cm(cubagens: Optional[list[dict]]) -> list[dict]:
@@ -121,29 +129,389 @@ class BraspressPlaywrightProvider(BraspressBrowserMixin, ProviderBase):
         except Exception:
             pass
 
-    async def _login(self) -> bool:
-        if self._logged_in:
-            return True
-        logger.info("[Braspress] Fazendo login...")
+    async def _abrir_formulario_login(self) -> None:
+        self._passo_atual = "login"
         await self._page.goto(self.LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
-        await self._page.locator('#inputLogin').wait_for(state="visible", timeout=15000)
-        await self._page.locator('#inputLogin').fill(self.cnpj)
+        await self._page.locator("#inputLogin").wait_for(state="visible", timeout=15000)
+        await self._page.locator("#inputLogin").fill(self.cnpj)
         await self._page.locator('input[name="pass"]').fill(self.senha)
+
+    async def _ler_turnstile(self) -> dict:
+        try:
+            state = await self._page.evaluate(
+                """() => {
+                    const widget = document.querySelector('.cf-turnstile, iframe[src*="challenges.cloudflare.com"]');
+                    const field = document.querySelector('[name="cf-turnstile-response"]');
+                    const token = field && field.value ? String(field.value) : '';
+                    return { present: !!(widget || field), token: token };
+                }"""
+            )
+        except Exception:
+            return {"present": False, "token": ""}
+        if not isinstance(state, dict):
+            return {"present": False, "token": ""}
+        return {
+            "present": bool(state.get("present")),
+            "token": str(state.get("token") or ""),
+        }
+
+    async def _aguardar_token_turnstile(self, seconds: float) -> str:
+        """Espera o Cloudflare gravar o token. Widget ausente não libera o envio."""
+        loops = max(1, int(seconds * 2))
+        for _ in range(loops):
+            state = await self._ler_turnstile()
+            token = state["token"].strip()
+            if token:
+                return token
+            await self._page.wait_for_timeout(500)
+        return ""
+
+    def _js_preencher_login(self) -> str:
+        cnpj = json.dumps(self.cnpj)
+        senha = json.dumps(self.senha)
+        return (
+            "(function(){"
+            "var u=document.querySelector('#inputLogin');"
+            "var p=document.querySelector('input[name=\"pass\"]');"
+            f"if(u){{u.value={cnpj};u.dispatchEvent(new Event('input',{{bubbles:true}}));}}"
+            f"if(p){{p.value={senha};p.dispatchEvent(new Event('input',{{bubbles:true}}));}}"
+            "return !!(u&&p&&u.value&&p.value);"
+            "})()"
+        )
+
+    async def _soltar_chrome_para_captcha(self) -> bool:
+        # O Turnstile recusa o clique enquanto o Playwright está ligado na página.
+        detach = getattr(self._browser, "detach", None) if self._browser else None
+        if not callable(detach):
+            return False
+        proc, profile, port = await detach()
+        self._browser = None
+        self._context = None
+        self._page = None
+        self._chrome_proc = proc
+        self._profile_dir = profile
+        self._debug_port = port
+        return bool(port)
+
+    async def _reconectar_chrome(self) -> None:
+        port = getattr(self, "_debug_port", None)
+        proc = getattr(self, "_chrome_proc", None)
+        if not port or proc is None:
+            return
+        from playwright.async_api import async_playwright
+
+        from fretio.browser.launcher import _ChromeBrowser
+        from fretio.providers.provider_utils import apply_performance_route_filters
+
+        pw = await async_playwright().start()
+        inner = await pw.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+        self._browser = _ChromeBrowser(inner, proc, getattr(self, "_profile_dir", None), pw)
+        self._chrome_proc = None
+        self._context = inner.contexts[0]
+        await apply_performance_route_filters(self._context)
+        pages = list(self._context.pages)
+        self._page = next((p for p in pages if "braspress.com" in (p.url or "")), None)
+        if self._page is None:
+            self._page = pages[0] if pages else await self._context.new_page()
+        self._page.set_default_timeout(30000)
+
+    async def _aguardar_captcha_sem_playwright(self) -> bool:
+        from fretio.browser.cdp_raw import cdp_eval
+
+        port = int(self._debug_port)
+        hint = "braspress.com"
+        await cdp_eval(port, f"location.href = {json.dumps(self.LOGIN_URL)}", host_hint=hint)
+        ready = False
+        for _ in range(20):
+            await asyncio.sleep(0.5)
+            if await cdp_eval(port, "!!document.querySelector('#inputLogin')", host_hint=hint) is True:
+                ready = True
+                break
+        if not ready:
+            return False
+        if await cdp_eval(port, self._js_preencher_login(), host_hint=hint) is not True:
+            return False
+        await cdp_eval(
+            port,
+            "document.title = 'Fretio — conclua o captcha da Braspress'",
+            host_hint=hint,
+        )
+        estado_js = """(() => {
+            const field = document.querySelector('[name="cf-turnstile-response"]');
+            const body = (document.body && document.body.innerText) || '';
+            const errEl = document.querySelector('.login-error');
+            const err = errEl ? (errEl.innerText || '').replace(/\\s+/g, ' ').trim() : '';
+            return {
+                tokenLen: field && field.value ? field.value.length : 0,
+                loggedIn: body.toLowerCase().includes('sair'),
+                loginError: err.slice(0, 180)
+            };
+        })()"""
+        clique_js = """(() => {
+            const b = document.querySelector('input[type="submit"][value="Acessar"]');
+            if (!b) return false;
+            b.click();
+            return true;
+        })()"""
+        clicou = False
+        for _ in range(self._TURNSTILE_USUARIO_S):
+            await asyncio.sleep(1)
+            state = await cdp_eval(port, estado_js, host_hint=hint)
+            if not isinstance(state, dict):
+                continue
+            if state.get("loggedIn"):
+                return True
+            if int(state.get("tokenLen") or 0) > 20 and not clicou:
+                await cdp_eval(port, clique_js, host_hint=hint)
+                clicou = True
+                logger.info("[Braspress] Captcha concluído, entrando no portal")
+            erro = str(state.get("loginError") or "").strip()
+            if clicou and erro:
+                self.last_error = f"Login falhou: {erro}"
+        return clicou and not self.last_error
+
+    async def _abrir_chrome_limpo_para_captcha(self) -> None:
+        import socket
+
+        from fretio.browser.cdp_raw import list_debug_targets, pick_page_target
+        from fretio.browser.launcher import launch_human_chrome
+
+        proc, port, profile = launch_human_chrome(self.LOGIN_URL)
+        self._chrome_proc = proc
+        self._debug_port = port
+        self._profile_dir = profile
+        # O chrome.exe inicial fecha depois de criar o processo da janela.
+        # A porta de depuração é que indica que a janela ficou aberta.
+        for _ in range(100):
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.3):
+                    break
+            except OSError:
+                await asyncio.sleep(0.1)
+        else:
+            raise RuntimeError("Chrome da Braspress não respondeu para o captcha")
+        for _ in range(40):
+            try:
+                target = pick_page_target(list_debug_targets(port), host_hint="braspress.com")
+            except Exception:
+                target = None
+            if target and "braspress.com" in str(target.get("url") or ""):
+                logger.info("[Braspress] Chrome normal aberto para o captcha")
+                return
+            await asyncio.sleep(0.25)
+        raise RuntimeError("Página de login da Braspress não abriu")
+
+    async def _aguardar_captcha_humano(self) -> bool:
+        """Espera o clique humano sem chamar o depurador enquanto a caixinha está na tela."""
+        from fretio.browser.cdp_raw import cdp_eval, list_debug_targets, pick_page_target
+
+        port = int(self._debug_port)
+        hint = "braspress.com"
+        # Uma única ligação, só para preencher a senha. O socket fecha em seguida.
+        await asyncio.sleep(1.5)
+        preenchido = await cdp_eval(port, self._js_preparar_captcha_humano(), host_hint=hint)
+        if preenchido is not True:
+            self.last_error = "Login falhou: não foi possível preencher o login da Braspress"
+            return False
+        clicou = False
+        for _ in range(self._TURNSTILE_USUARIO_S):
+            await asyncio.sleep(1)
+            try:
+                target = pick_page_target(list_debug_targets(port), host_hint=hint) or {}
+            except Exception:
+                target = {}
+            title = str(target.get("title") or "")
+            if "LOGADO" in title:
+                return True
+            if "CAPTCHA_OK" in title and not clicou:
+                await cdp_eval(
+                    port,
+                    """(() => {
+                        const b = document.querySelector('input[type="submit"][value="Acessar"]');
+                        if (!b) return false;
+                        b.click();
+                        return true;
+                    })()""",
+                    host_hint=hint,
+                )
+                clicou = True
+                logger.info("[Braspress] Captcha concluído, entrando no portal")
+            if clicou:
+                logged = await cdp_eval(
+                    port,
+                    "((document.body && document.body.innerText) || '').toLowerCase().includes('sair')",
+                    host_hint=hint,
+                )
+                if logged is True:
+                    return True
+        return False
+
+    def _js_preparar_captcha_humano(self) -> str:
+        cnpj = json.dumps(self.cnpj)
+        senha = json.dumps(self.senha)
+        return (
+            "(function(){"
+            "var u=document.querySelector('#inputLogin');"
+            "var p=document.querySelector('input[name=\"pass\"]');"
+            f"if(u) u.value={cnpj};"
+            f"if(p) p.value={senha};"
+            "if(!window.__fretioCaptchaWatch){"
+            "window.__fretioCaptchaWatch=setInterval(function(){"
+            "var field=document.querySelector('[name=\"cf-turnstile-response\"]');"
+            "var body=((document.body&&document.body.innerText)||'').toLowerCase();"
+            "if(body.indexOf('sair')>=0){document.title='Fretio LOGADO';return;}"
+            "if(field&&field.value&&field.value.length>20) document.title='Fretio CAPTCHA_OK';"
+            "},400);}"
+            "if(document.title.indexOf('Fretio')!==0) document.title='Fretio — confirme que é humano';"
+            "return !!(u&&p&&u.value&&p.value);"
+            "})()"
+        )
+
+    async def _reabrir_para_captcha(self) -> None:
+        # O Chrome headless não deixa a pessoa marcar o Turnstile. A janela
+        # abre antes do novo carregamento: o widget não renderiza num viewport 1x1.
+        # `headless` configurado permanece intacto para a sessão não ser recriada.
+        if self.headless and not self._captcha_visivel:
+            self._captcha_visivel = True
+            await self.cleanup()
+            await self._init_browser()
+        await self._mostrar_janela_captcha()
+        await self._abrir_formulario_login()
+
+    async def _resolver_turnstile_se_necessario(self) -> bool:
+        state = await self._ler_turnstile()
+        if not state["present"]:
+            return True
+        token = await self._aguardar_token_turnstile(self._TURNSTILE_AUTO_S)
+        if token:
+            return True
+        self._passo_atual = "aguardando_captcha"
+        logger.info("[Braspress] Captcha do login exige confirmação na janela do Chrome")
+        if self._browser is not None and callable(getattr(self._browser, "detach", None)):
+            await self.cleanup()
+            self._captcha_visivel = True
+            await self._abrir_chrome_limpo_para_captcha()
+            ok = await self._aguardar_captcha_humano()
+            if ok:
+                await self._reconectar_chrome()
+            if ok:
+                logger.info("[Braspress] Captcha do login concluído")
+                self._captcha_ja_enviado = True
+                return True
+            if not self.last_error:
+                self.last_error = (
+                    "Login falhou: captcha da Braspress não resolvido. "
+                    "Conclua o desafio na janela do Chrome e tente a cotação de novo."
+                )
+            logger.error("[Braspress] %s", self.last_error)
+            return False
+        await self._reabrir_para_captcha()
+        token = await self._aguardar_token_turnstile(self._TURNSTILE_USUARIO_S)
+        if token:
+            logger.info("[Braspress] Captcha do login concluído")
+            return True
+        self.last_error = (
+            "Login falhou: captcha da Braspress não resolvido. "
+            "Conclua o desafio na janela do Chrome e tente a cotação de novo."
+        )
+        logger.error("[Braspress] %s", self.last_error)
+        return False
+
+    async def _clicar_acessar(self) -> None:
+        # O portal recusa o POST sem o token do Turnstile. O clique só ocorre
+        # depois que o widget já gravou esse token, ou quando não há captcha.
         await self._page.locator('input[type="submit"][value="Acessar"]').click()
 
-        for _ in range(50):
+    async def _mensagem_erro_login(self) -> str:
+        try:
+            texto = await self._page.locator(".login-error").inner_text()
+        except Exception:
+            return ""
+        texto = " ".join(str(texto or "").split())
+        return texto[:180]
+
+    async def _confirmar_login(self) -> bool:
+        for _ in range(80):
             await self._page.wait_for_timeout(100)
             try:
                 body = await self._page.inner_text("body")
                 if "sair" in body.lower():
-                    logger.info("[Braspress] Login OK")
-                    self._logged_in = True
                     return True
             except Exception:
-                pass
+                continue
+            erro = await self._mensagem_erro_login()
+            if erro:
+                self.last_error = f"Login falhou: {erro}"
+                return False
+        return False
 
-        self.last_error = "Login falhou"
-        logger.error("[Braspress] Login falhou")
+    async def _login(self) -> bool:
+        async with self._login_lock:
+            if self._logged_in:
+                return True
+            logger.info("[Braspress] Fazendo login...")
+            self.last_error = None
+            try:
+                await self._abrir_formulario_login()
+                if not await self._resolver_turnstile_se_necessario():
+                    return False
+                if not getattr(self, "_captcha_ja_enviado", False):
+                    await self._clicar_acessar()
+                if await self._confirmar_login():
+                    self._logged_in = True
+                    self._passo_atual = "login_ok"
+                    await self._ocultar_janela_captcha()
+                    logger.info("[Braspress] Login OK")
+                    return True
+            except Exception as exc:
+                self.last_error = "Login falhou"
+                logger.error("[Braspress] Login falhou: %s", exc)
+                return False
+            if not self.last_error:
+                self.last_error = "Login falhou"
+            logger.error("[Braspress] %s", self.last_error)
+            return False
+
+    async def _cotacao_ainda_no_login(self, page) -> bool:
+        try:
+            campo = page.locator("#inputLogin")
+            return await campo.count() > 0 and await campo.is_visible()
+        except Exception:
+            return False
+
+    async def _entrar_na_cotacao(self, page) -> bool:
+        # /w/cotacao/view mostra ENTRAR mesmo depois do login em /w/cliente/view.
+        # Nessa janela o visto do Turnstile já pode estar verde.
+        if not await self._cotacao_ainda_no_login(page):
+            return True
+        logger.info("[Braspress] A cotação pediu o login de novo")
+        await page.locator("#inputLogin").fill(self.cnpj)
+        await page.locator('input[name="pass"]').fill(self.senha)
+        token = ""
+        for _ in range(40):
+            token = str(
+                await page.evaluate(
+                    "() => (document.querySelector('[name=\"cf-turnstile-response\"]')?.value || '')"
+                )
+                or ""
+            )
+            if len(token) > 20:
+                break
+            await page.wait_for_timeout(500)
+        if len(token) <= 20:
+            self.last_error = (
+                "Login falhou: captcha da Braspress não resolvido. "
+                "Conclua o desafio na janela do Chrome e tente a cotação de novo."
+            )
+            logger.error("[Braspress] %s", self.last_error)
+            return False
+        await page.locator('input[type="submit"][value="Acessar"]').click()
+        for _ in range(40):
+            if not await self._cotacao_ainda_no_login(page):
+                return True
+            await page.wait_for_timeout(250)
+        self.last_error = "Login falhou: a cotação continuou na tela de entrar"
+        logger.error("[Braspress] %s", self.last_error)
         return False
 
     async def _coteir_legacy(
@@ -185,16 +553,13 @@ class BraspressPlaywrightProvider(BraspressBrowserMixin, ProviderBase):
             if not await self._login():
                 return None
 
-            # Criar nova página para cada cotação (mantém sessão via cookies do contexto)
-            if self._logged_in:
-                try:
-                    await self._page.close()
-                except Exception:
-                    pass
+            # A mesma aba segue para a cotação. Uma aba nova cai de novo
+            # na tela ENTRAR de /w/cotacao/view, sem a sessão que acabou de entrar.
+            page = self._page
+            if page is None or page.is_closed():
                 self._page = await self._context.new_page()
                 self._page.set_default_timeout(30000)
-
-            page = self._page
+                page = self._page
 
             # ── PÁGINA DE COTAÇÃO ──────────────────────────────────
             await page.goto(self.COTACAO_URL, wait_until="domcontentloaded", timeout=15000)
@@ -209,6 +574,9 @@ class BraspressPlaywrightProvider(BraspressBrowserMixin, ProviderBase):
                     return None
                 await page.goto(self.COTACAO_URL, wait_until="domcontentloaded", timeout=15000)
                 await page.wait_for_timeout(500)
+
+            if not await self._entrar_na_cotacao(page):
+                return None
 
             # ── FECHAR MODAL/POPUP ─────────────────────────────────
             for _ in range(3):
@@ -491,6 +859,37 @@ class BraspressPlaywrightProvider(BraspressBrowserMixin, ProviderBase):
                 self.last_error = "Campos do formulário não preenchidos (peso ausente)"
                 logger.error(f"[Braspress] {self.last_error}: {form_check}")
                 return None
+
+            # O clique no CNPJ estoura enquanto a página ainda abre e o
+            # fallback em JS se perde. Sem esse campo o Calcular fica desligado.
+            if cnpj_dest:
+                cnpj_now = await page.evaluate(
+                    "() => (document.getElementById('cnpjDestinatario')?.value || '')"
+                )
+                if len(self._digits(str(cnpj_now))) < 11:
+                    logger.warning("[Braspress] CNPJ do destinatário vazio antes de calcular, re-preenchendo...")
+                    try:
+                        loc_cnpj = page.locator("#cnpjDestinatario")
+                        await loc_cnpj.click(timeout=5000)
+                        await loc_cnpj.press("Control+a")
+                        await loc_cnpj.type(self._digits(cnpj_dest), delay=40)
+                        await page.keyboard.press("Tab")
+                        await page.wait_for_timeout(800)
+                    except Exception:
+                        await page.evaluate(
+                            """(cnpj) => {
+                                const el = document.getElementById('cnpjDestinatario');
+                                if (!el) return;
+                                const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+                                if (setter) setter.call(el, cnpj);
+                                else el.value = cnpj;
+                                el.dispatchEvent(new Event('input', {bubbles: true}));
+                                el.dispatchEvent(new Event('change', {bubbles: true}));
+                                el.dispatchEvent(new Event('blur', {bubbles: true}));
+                            }""",
+                            self._digits(cnpj_dest),
+                        )
+                        await page.wait_for_timeout(800)
 
             # Verificar e corrigir CEP Destino antes de calcular
             cep_dest_check = self._digits(str(form_check.get("cepDest", "")))

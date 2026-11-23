@@ -226,6 +226,7 @@ Campos minimos por provider:
 
 Observacao operacional:
 
+- Braspress: o login em `/w/cliente/view` exige Cloudflare Turnstile. Se o token não passa sozinho, abre um Chrome normal (`--do-not-de-elevate`, sem job do app e sem Playwright) para a pessoa marcar "Confirme que é humano". O Acessar só é clicado depois do visto. A cotação segue na mesma aba; se `/w/cotacao/view` mostrar ENTRAR de novo, preenche e envia quando o visto já está verde. A opção `headless` configurada não é alterada.
 - Translovato usa o modal de login da solicitacao de cotacao; aguarda o redirecionamento antes de repetir Entrar e confirma o CEP do romaneio depois da consulta do CNPJ.
 - O numero do endereco de destino extraido do romaneio colado e enviado ao formulario atual da Rodonaves.
 - Rodonaves deve abrir primeiro o portal oficial (`login_url` configurado ou `https://rodonaves.com.br/portaldocliente`) para estabelecer sessão/login; `https://rodonaves.com.br/cotacao` é o destino de cotação. URLs antigas de `cliente.rte.com.br`, `sistema.rte.com.br`, `/Quotation` e SSW são tratadas como legadas.
