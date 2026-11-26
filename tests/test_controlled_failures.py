@@ -29,10 +29,7 @@ class TestTransientResultFailures:
         assert _is_expected_transient_failure_str(detalhe)
 
     def test_braspress_captcha_nao_resolvido(self):
-        detalhe = (
-            "Login falhou: captcha da Braspress não resolvido. "
-            "Conclua o desafio na janela do Chrome e tente a cotação de novo."
-        )
+        detalhe = "Login falhou: captcha da Braspress não resolvido automaticamente."
         assert _is_expected_transient_failure_str(detalhe)
         assert is_expected_prelogin_failure(detalhe)
 

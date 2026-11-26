@@ -19,10 +19,29 @@ _CUBAGEM_AUSENTE_MSG = (
 
 
 class EucaturProvider(ProviderBase):
-    """Provider Eucatur via portal SSW (sistema.ssw.inf.br)."""
+    """Provider Eucatur via portal SSW (tms.ssw.inf.br)."""
 
-    LOGIN_URL = "https://sistema.ssw.inf.br/bin/ssw0422"
-    COTACAO_URL = "https://sistema.ssw.inf.br/bin/ssw1608"
+    LOGIN_URL = "https://tms.ssw.inf.br/bin/ssw0422"
+    COTACAO_URL = "https://tms.ssw.inf.br/bin/ssw1608"
+    _WAF_TIMEOUT_S = 45.0
+    # O interstitial da AWS WAF recarrega sozinho quando o token sai. Enquanto
+    # o Playwright está ligado, o desafio não conclui e a tela pede clique.
+    _WAF_STATE_JS = """(() => {
+        const url = String(location.href || '');
+        const onPortal = url.indexOf('ssw.inf.br') !== -1;
+        const hasLogin = !!document.querySelector('input[name="f1"]');
+        const onCotacao = url.indexOf('ssw1608') !== -1 && document.querySelectorAll('input').length > 0;
+        const pastLogin = onPortal && url.indexOf('ssw0422') === -1 && url.indexOf('ssw1608') === -1;
+        const menu = onPortal && url.indexOf('menu') !== -1;
+        const challenge = !!document.getElementById('challenge-container')
+            || !!document.querySelector('script[src*="challenge.js"]')
+            || !!document.querySelector('script[src*="awswaf.com"]');
+        return {
+            ready: onPortal && !challenge && (hasLogin || onCotacao || pastLogin || menu),
+            challenge: challenge,
+            url: url
+        };
+    })()"""
 
     def __init__(
         self,
@@ -43,29 +62,203 @@ class EucaturProvider(ProviderBase):
         self._context = None
         self._page = None
         self._playwright = None
+        self._chrome_proc = None
+        self._debug_port = 0
+        self._profile_dir: str | None = None
         self._logged_in = False
         self.last_error: str | None = None
 
+    @staticmethod
+    def _chrome_launch_args(chrome_path: str, port: int, profile_dir: str, url: str, *, offscreen: bool) -> list[str]:
+        """Chrome real, sem flag de automação, para o desafio da AWS WAF passar sozinho."""
+        args = [
+            chrome_path,
+            f"--remote-debugging-port={int(port)}",
+            f"--user-data-dir={profile_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--do-not-de-elevate",
+            "--disable-session-crashed-bubble",
+            "--hide-crash-restore-bubble",
+            "--noerrdialogs",
+        ]
+        if offscreen:
+            args.extend(["--window-position=-3000,-3000", "--window-size=900,760"])
+        else:
+            args.extend(["--window-position=200,80", "--window-size=980,760"])
+        args.append(url)
+        return args
+
+    def _launch_chrome_limpo(self) -> None:
+        import subprocess
+        import tempfile
+
+        from fretio.browser.chrome_locator import find_chrome
+        from fretio.browser.process_guard import _find_free_port, browser_shutdown_requested
+
+        if browser_shutdown_requested():
+            raise RuntimeError("Encerramento do aplicativo em andamento; novos browsers estao bloqueados")
+        chrome_path = find_chrome()
+        port = _find_free_port()
+        profile_dir = tempfile.mkdtemp(prefix="fretio_eucatur_")
+        # Fora do Job Object do app: ele quebra o sandbox e a verificação de robô não conclui.
+        proc = subprocess.Popen(
+            self._chrome_launch_args(
+                chrome_path,
+                port,
+                profile_dir,
+                self.LOGIN_URL,
+                offscreen=bool(self.headless),
+            ),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        self._chrome_proc = proc
+        self._debug_port = port
+        self._profile_dir = profile_dir
+        logger.info("[%s] Chrome real aberto para a verificação automática de robô", self.nome)
+
+    async def _esperar_porta_debug(self) -> None:
+        import socket
+
+        port = int(self._debug_port or 0)
+        for _ in range(120):
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.3):
+                    return
+            except OSError:
+                await asyncio.sleep(0.1)
+        raise RuntimeError("Eucatur: Chrome não respondeu para a verificação automática de robô")
+
+    async def _aguardar_portal_liberado(
+        self,
+        port: int,
+        *,
+        timeout_s: float | None = None,
+        pausa_inicial: float = 2.0,
+        cdp_eval=None,
+    ) -> bool:
+        """Espera o desafio JS da AWS WAF recarregar o portal, sem clique humano."""
+        if cdp_eval is None:
+            from fretio.browser.cdp_raw import cdp_eval as cdp_eval
+        if pausa_inicial > 0:
+            await asyncio.sleep(pausa_inicial)
+        limite = self._WAF_TIMEOUT_S if timeout_s is None else timeout_s
+        loops = max(1, int(limite / 0.5))
+        for _ in range(loops):
+            state = await cdp_eval(int(port), self._WAF_STATE_JS, host_hint="ssw.inf.br")
+            if isinstance(state, dict) and state.get("ready"):
+                logger.info("[%s] Verificação de robô concluída automaticamente", self.nome)
+                return True
+            await asyncio.sleep(0.5)
+        return False
+
+    async def _conectar_playwright(self) -> None:
+        from playwright.async_api import async_playwright
+
+        from fretio.browser.launcher import _ChromeBrowser
+        from fretio.providers.provider_utils import apply_performance_route_filters
+
+        port = int(self._debug_port or 0)
+        proc = self._chrome_proc
+        profile = self._profile_dir
+        if not port or proc is None:
+            raise RuntimeError("Eucatur: Chrome do portal TMS não está disponível")
+        pw = await async_playwright().start()
+        try:
+            inner = await asyncio.wait_for(
+                pw.chromium.connect_over_cdp(f"http://127.0.0.1:{port}"),
+                timeout=15,
+            )
+        except Exception:
+            try:
+                await pw.stop()
+            except Exception:
+                pass
+            raise
+        self._browser = _ChromeBrowser(inner, proc, profile, pw)
+        self._chrome_proc = None
+        self._profile_dir = None
+        self._playwright = None
+        context = inner.contexts[0] if inner.contexts else await inner.new_context()
+        self._context = context
+        try:
+            await apply_performance_route_filters(
+                context,
+                allow_domains=("awswaf.com", "tms.ssw.inf.br"),
+            )
+        except Exception:
+            pass
+        pages = list(context.pages)
+        page = next((p for p in pages if "ssw.inf.br" in str(getattr(p, "url", "") or "")), None)
+        self._page = page or (pages[0] if pages else await context.new_page())
+        try:
+            self._page.set_default_timeout(45000)
+        except Exception:
+            pass
+
+    async def _pagina_em_desafio(self) -> bool:
+        page = self._page
+        if page is None:
+            return False
+        try:
+            return bool(await page.evaluate(
+                """() => !!(
+                    document.getElementById('challenge-container')
+                    || document.querySelector('script[src*="challenge.js"]')
+                    || document.querySelector('script[src*="awswaf.com"]')
+                )"""
+            ))
+        except Exception:
+            return False
+
+    async def _garantir_sem_desafio(self) -> None:
+        """Se o TMS ainda estiver no interstitial, solta o Playwright até o token sair."""
+        if not await self._pagina_em_desafio():
+            return
+        logger.info("[%s] Portal pediu verificação de robô; aguardando conclusão automática", self.nome)
+        browser = self._browser
+        detach = getattr(browser, "detach", None) if browser is not None else None
+        if not callable(detach):
+            port = int(self._debug_port or 0)
+            if not port or not await self._aguardar_portal_liberado(port, pausa_inicial=0.5):
+                raise RuntimeError("Eucatur: verificação automática de robô não concluiu no portal TMS")
+            return
+        proc, profile, port = await detach()
+        self._browser = None
+        self._context = None
+        self._page = None
+        self._chrome_proc = proc
+        self._profile_dir = profile
+        self._debug_port = port
+        liberou = await self._aguardar_portal_liberado(int(port), pausa_inicial=0.5)
+        await self._conectar_playwright()
+        if not liberou:
+            raise RuntimeError("Eucatur: verificação automática de robô não concluiu no portal TMS")
+
     async def _init_browser(self):
-        """Inicializa browser Playwright."""
+        """Abre o Chrome real, espera a verificação de robô e só então liga o Playwright."""
         if self._browser:
-            if self._browser.is_connected():
+            try:
+                conectado = bool(self._browser.is_connected())
+            except Exception:
+                conectado = False
+            if conectado:
                 return
             logger.warning(f"[{self.nome}] Browser desconectado, reinicializando...")
             await self.cleanup()
 
-        from fretio.providers.base import launch_browser_resilient
-        self._browser = await launch_browser_resilient(
-            headless=self.headless,
-            args=['--disable-blink-features=AutomationControlled', '--no-sandbox'],
-        )
-        self._context = await self._browser.new_context(
-            viewport={'width': 1920, 'height': 1080},
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        )
-        from fretio.providers.provider_utils import apply_performance_route_filters
-        await apply_performance_route_filters(self._context)
-        self._page = await self._context.new_page()
+        self._launch_chrome_limpo()
+        try:
+            await self._esperar_porta_debug()
+            liberou = await self._aguardar_portal_liberado(int(self._debug_port))
+            await self._conectar_playwright()
+            if not liberou:
+                raise RuntimeError("Eucatur: verificação automática de robô não concluiu no portal TMS")
+        except Exception:
+            await self.cleanup()
+            raise
 
     async def _login(self):
         """Faz login no portal SSW."""
@@ -74,7 +267,12 @@ class EucaturProvider(ProviderBase):
         try:
             logger.info(f"[{self.nome}] Fazendo login no SSW...")
             await self._page.goto(self.LOGIN_URL, wait_until='domcontentloaded', timeout=60000)
-            await self._page.locator('input[name=f1]').wait_for(state="visible", timeout=15000)
+            await self._garantir_sem_desafio()
+            try:
+                await self._page.locator('input[name=f1]').wait_for(state="visible", timeout=20000)
+            except Exception:
+                await self._garantir_sem_desafio()
+                await self._page.locator('input[name=f1]').wait_for(state="visible", timeout=15000)
 
             await self._page.locator('input[name=f1]').fill(self.dominio)
             await self._page.locator('input[name=f3]').fill(self.usuario)
@@ -132,9 +330,15 @@ class EucaturProvider(ProviderBase):
 
     async def cleanup(self):
         """Fecha recursos Playwright sem derrubar o async worker."""
+        import shutil
+
+        from fretio.browser.process_guard import _kill_proc
+
         page = self._page
         context = self._context
         browser = self._browser
+        proc = self._chrome_proc
+        profile = self._profile_dir
         try:
             if page is not None:
                 try:
@@ -148,9 +352,20 @@ class EucaturProvider(ProviderBase):
             if browser is not None:
                 await self._cleanup_step("browser.close", browser.close)
         finally:
+            if proc is not None:
+                try:
+                    _kill_proc(proc)
+                except Exception:
+                    pass
+            if profile:
+                shutil.rmtree(profile, ignore_errors=True)
             self._browser = None
             self._context = None
             self._page = None
+            self._playwright = None
+            self._chrome_proc = None
+            self._debug_port = 0
+            self._profile_dir = None
             self._logged_in = False
 
     @staticmethod
@@ -185,6 +400,7 @@ class EucaturProvider(ProviderBase):
         self._passo_atual = "navegando_cotacao"
         try:
             await self._page.goto(self.COTACAO_URL, wait_until='domcontentloaded', timeout=60000)
+            await self._garantir_sem_desafio()
         except PlaywrightTimeoutError as exc:
             raise RuntimeError(
                 "Eucatur: timeout de rede/portal ao abrir tela SSW de cotação (ssw1608)"
@@ -199,6 +415,7 @@ class EucaturProvider(ProviderBase):
             await self._login()
             try:
                 await self._page.goto(self.COTACAO_URL, wait_until='domcontentloaded', timeout=60000)
+                await self._garantir_sem_desafio()
             except PlaywrightTimeoutError as exc:
                 raise RuntimeError(
                     "Eucatur: timeout de rede/portal ao reabrir tela SSW de cotação (ssw1608)"

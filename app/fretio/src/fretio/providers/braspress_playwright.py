@@ -25,6 +25,7 @@ class BraspressPlaywrightProvider(BraspressBrowserMixin, ProviderBase):
     LOGIN_URL = "https://www.braspress.com.br/w/cliente/view"
     COTACAO_URL = "https://www.braspress.com.br/w/cotacao/view"
     _TURNSTILE_AUTO_S = 8
+    _TURNSTILE_AUTO_CHROME_S = 40
     _TURNSTILE_USUARIO_S = 180
     _digits = staticmethod(_digits)
     _fmt_decimal = staticmethod(_fmt_decimal)
@@ -276,7 +277,7 @@ class BraspressPlaywrightProvider(BraspressBrowserMixin, ProviderBase):
         from fretio.browser.cdp_raw import list_debug_targets, pick_page_target
         from fretio.browser.launcher import launch_human_chrome
 
-        proc, port, profile = launch_human_chrome(self.LOGIN_URL)
+        proc, port, profile = launch_human_chrome(self.LOGIN_URL, offscreen=True)
         self._chrome_proc = proc
         self._debug_port = port
         self._profile_dir = profile
@@ -296,13 +297,13 @@ class BraspressPlaywrightProvider(BraspressBrowserMixin, ProviderBase):
             except Exception:
                 target = None
             if target and "braspress.com" in str(target.get("url") or ""):
-                logger.info("[Braspress] Chrome normal aberto para o captcha")
+                logger.info("[Braspress] Chrome real aberto fora da tela para o Turnstile")
                 return
             await asyncio.sleep(0.25)
         raise RuntimeError("Página de login da Braspress não abriu")
 
-    async def _aguardar_captcha_humano(self) -> bool:
-        """Espera o clique humano sem chamar o depurador enquanto a caixinha está na tela."""
+    async def _aguardar_captcha_automatico(self) -> bool:
+        """Espera o Turnstile gravar o token sozinho, sem clique e sem manter o depurador aberto."""
         from fretio.browser.cdp_raw import cdp_eval, list_debug_targets, pick_page_target
 
         port = int(self._debug_port)
@@ -314,7 +315,7 @@ class BraspressPlaywrightProvider(BraspressBrowserMixin, ProviderBase):
             self.last_error = "Login falhou: não foi possível preencher o login da Braspress"
             return False
         clicou = False
-        for _ in range(self._TURNSTILE_USUARIO_S):
+        for _ in range(self._TURNSTILE_AUTO_CHROME_S):
             await asyncio.sleep(1)
             try:
                 target = pick_page_target(list_debug_targets(port), host_hint=hint) or {}
@@ -362,21 +363,29 @@ class BraspressPlaywrightProvider(BraspressBrowserMixin, ProviderBase):
             "if(body.indexOf('sair')>=0){document.title='Fretio LOGADO';return;}"
             "if(field&&field.value&&field.value.length>20) document.title='Fretio CAPTCHA_OK';"
             "},400);}"
-            "if(document.title.indexOf('Fretio')!==0) document.title='Fretio — confirme que é humano';"
+            "if(document.title.indexOf('Fretio')!==0) document.title='Fretio Braspress';"
             "return !!(u&&p&&u.value&&p.value);"
             "})()"
         )
 
-    async def _reabrir_para_captcha(self) -> None:
-        # O Chrome headless não deixa a pessoa marcar o Turnstile. A janela
-        # abre antes do novo carregamento: o widget não renderiza num viewport 1x1.
-        # `headless` configurado permanece intacto para a sessão não ser recriada.
-        if self.headless and not self._captcha_visivel:
-            self._captcha_visivel = True
-            await self.cleanup()
-            await self._init_browser()
-        await self._mostrar_janela_captcha()
-        await self._abrir_formulario_login()
+    async def _resolver_turnstile_no_chrome_limpo(self) -> bool:
+        """Turnstile no Chrome real, fora da tela, até o token sair sem clique."""
+        self._passo_atual = "aguardando_captcha"
+        logger.info("[Braspress] Resolvendo o Turnstile automaticamente, sem janela")
+        await self.cleanup()
+        self._captcha_visivel = False
+        self._janela_captcha_aberta = False
+        await self._abrir_chrome_limpo_para_captcha()
+        ok = await self._aguardar_captcha_automatico()
+        if ok:
+            await self._reconectar_chrome()
+            self._captcha_ja_enviado = True
+            logger.info("[Braspress] Captcha do login concluído automaticamente")
+            return True
+        if not self.last_error:
+            self.last_error = "Login falhou: captcha da Braspress não resolvido automaticamente."
+        logger.error("[Braspress] %s", self.last_error)
+        return False
 
     async def _resolver_turnstile_se_necessario(self) -> bool:
         state = await self._ler_turnstile()
@@ -385,37 +394,7 @@ class BraspressPlaywrightProvider(BraspressBrowserMixin, ProviderBase):
         token = await self._aguardar_token_turnstile(self._TURNSTILE_AUTO_S)
         if token:
             return True
-        self._passo_atual = "aguardando_captcha"
-        logger.info("[Braspress] Captcha do login exige confirmação na janela do Chrome")
-        if self._browser is not None and callable(getattr(self._browser, "detach", None)):
-            await self.cleanup()
-            self._captcha_visivel = True
-            await self._abrir_chrome_limpo_para_captcha()
-            ok = await self._aguardar_captcha_humano()
-            if ok:
-                await self._reconectar_chrome()
-            if ok:
-                logger.info("[Braspress] Captcha do login concluído")
-                self._captcha_ja_enviado = True
-                return True
-            if not self.last_error:
-                self.last_error = (
-                    "Login falhou: captcha da Braspress não resolvido. "
-                    "Conclua o desafio na janela do Chrome e tente a cotação de novo."
-                )
-            logger.error("[Braspress] %s", self.last_error)
-            return False
-        await self._reabrir_para_captcha()
-        token = await self._aguardar_token_turnstile(self._TURNSTILE_USUARIO_S)
-        if token:
-            logger.info("[Braspress] Captcha do login concluído")
-            return True
-        self.last_error = (
-            "Login falhou: captcha da Braspress não resolvido. "
-            "Conclua o desafio na janela do Chrome e tente a cotação de novo."
-        )
-        logger.error("[Braspress] %s", self.last_error)
-        return False
+        return await self._resolver_turnstile_no_chrome_limpo()
 
     async def _clicar_acessar(self) -> None:
         # O portal recusa o POST sem o token do Turnstile. O clique só ocorre
@@ -499,10 +478,19 @@ class BraspressPlaywrightProvider(BraspressBrowserMixin, ProviderBase):
                 break
             await page.wait_for_timeout(500)
         if len(token) <= 20:
-            self.last_error = (
-                "Login falhou: captcha da Braspress não resolvido. "
-                "Conclua o desafio na janela do Chrome e tente a cotação de novo."
-            )
+            logger.info("[Braspress] Turnstile da cotação sem token; resolvendo automaticamente")
+            if not await self._resolver_turnstile_no_chrome_limpo():
+                return False
+            page = self._page
+            if page is None:
+                self.last_error = "Login falhou: a cotação continuou na tela de entrar"
+                return False
+            await page.goto(self.COTACAO_URL, wait_until="domcontentloaded", timeout=15000)
+            for _ in range(40):
+                if not await self._cotacao_ainda_no_login(page):
+                    return True
+                await page.wait_for_timeout(250)
+            self.last_error = "Login falhou: a cotação continuou na tela de entrar"
             logger.error("[Braspress] %s", self.last_error)
             return False
         await page.locator('input[type="submit"][value="Acessar"]').click()

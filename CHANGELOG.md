@@ -3,6 +3,8 @@
 ## 2.73 - 2026-11-26
 
 - COTAÇÃO: em computador com até 3 GB de RAM, ou com pouca memória livre, cada transportadora abre um Chrome por vez e o fecha ao terminar. O preenchimento dos portais não muda. Máquinas com mais memória continuam cotando em paralelo.
+- BRASPRESS: o visto "Confirme que é humano" conclui sozinho num Chrome real fora da tela, sem clique.
+- EUCATUR: a cotação usa o portal TMS e espera a verificação de robô terminar sozinha, sem clique.
 
 ## 2.72 - 2026-11-23
 
