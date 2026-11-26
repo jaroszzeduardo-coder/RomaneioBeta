@@ -400,8 +400,24 @@ def _resolver_empresa() -> str:
     return nome
 
 
+def _aplicar_webview_memoria_baixa() -> None:
+    # O WebView2 só lê estes argumentos quando o processo nasce.
+    try:
+        from cotacao.memory_budget import single_chrome_mode
+    except Exception:
+        return
+    if not single_chrome_mode():
+        return
+    extra = "--renderer-process-limit=1 --disk-cache-size=8388608 --disable-extensions"
+    atual = os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "").strip()
+    if "--renderer-process-limit=" in atual:
+        return
+    os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = f"{atual} {extra}".strip()
+
+
 def _run_dev(args) -> None:
     """Modo dev: carrega o app direto numa empresa, sem partida/licença."""
+    _aplicar_webview_memoria_baixa()
     empresa = args.empresa or _resolver_empresa()
     api = Api(empresa, cc._empresa_config_path(empresa))
     window = webview.create_window(
@@ -486,6 +502,7 @@ def _run_producao() -> None:
     cont, _logger = run_process_startup()
     if not cont:
         return
+    _aplicar_webview_memoria_baixa()
 
     # Cliente que atualizou in-app (Qt->WebView2) sem o runtime WebView2: abrir a
     # janela daria tela em branco. Avisa com instruções e não inicia, em vez de

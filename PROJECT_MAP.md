@@ -146,6 +146,7 @@ Modulo dividido:
 - `app/cotacao/validation.py`: validacoes.
 - `app/cotacao/romaneio_parser.py`: extracao de dados do romaneio colado/processado.
 - `app/cotacao/session_manager.py`: sessoes/providers reaproveitaveis.
+- `app/cotacao/memory_budget.py`: limite de Chromes simultaneos conforme a RAM. Em pouca memoria a cotacao abre um Chrome por vez, sem mudar o preenchimento dos portais.
 - `app/cotacao/orchestrator.py`: prepara dados, valida e executa providers.
 - `app/cotacao/error_context.py`: contexto de erro por provider.
 

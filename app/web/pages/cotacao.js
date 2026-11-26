@@ -40,12 +40,14 @@
     // Backend aceitou: agora sim marca em andamento, vira dono e zera o anterior.
     running = true;
     const s = st(app);
-    s.running = true; s.started = true; s.resumo = RESUMO_ANDAMENTO; s.runStatus = RUNSTATUS_ANDAMENTO;
+    s.running = true; s.started = true; s.resumo = RESUMO_ANDAMENTO;
+    const avisoMemoria = String((app.state && app.state.subTitulo) || "");
+    s.runStatus = avisoMemoria.includes("pouca memória") ? avisoMemoria : RUNSTATUS_ANDAMENTO;
     app.beginOp("cotacao");
     window.CotStatus.reset("cotStatusBody");
     document.getElementById("cotStatusWrap").hidden = false;
     document.getElementById("cotResult").textContent = RESUMO_ANDAMENTO;
-    document.getElementById("cotRunStatus").textContent = RUNSTATUS_ANDAMENTO;
+    document.getElementById("cotRunStatus").textContent = s.runStatus;
   }
 
   function finalizar(app) {

@@ -92,11 +92,21 @@ class _ChromeBrowser:
             pass
 
 
-def launch_human_chrome(url: str):
-    """Abre o Chrome visível, sem Playwright, para a pessoa resolver um captcha.
+def with_low_memory_chrome_args(launch_args: list[str]) -> list[str]:
+    """Flags leves só quando o PC não aguenta vários Chromes. Sem isso, devolve a lista igual."""
+    try:
+        from cotacao.memory_budget import apply_low_memory_chrome_args
+    except Exception:
+        return launch_args
+    return apply_low_memory_chrome_args(launch_args)
 
-    A janela já nasce no tamanho normal. Flags de automação ficam de fora:
-    o Turnstile da Braspress fica vermelho quando o Chrome nasce controlado.
+
+def launch_human_chrome(url: str, *, offscreen: bool = False):
+    """Abre o Chrome real, sem Playwright, para o Turnstile concluir sozinho.
+
+    A janela nasce em tamanho real. Fora da tela quando *offscreen* é verdadeiro.
+    Flags de automação ficam de fora: o visto fica vermelho quando o Chrome
+    nasce controlado.
     """
     if browser_shutdown_requested():
         raise RuntimeError("Encerramento do aplicativo em andamento; novos browsers estao bloqueados")
@@ -106,6 +116,10 @@ def launch_human_chrome(url: str):
     # Sem --do-not-de-elevate o Chrome deste processo reabre o Chrome do
     # usuário, descarta o perfil novo e a porta de depuração nunca sobe.
     # O job do app também fica de fora: ele quebra o sandbox e o visto volta vermelho.
+    if offscreen:
+        window = ["--window-position=-3000,-3000", "--window-size=900,760"]
+    else:
+        window = ["--window-position=200,80", "--window-size=980,760"]
     proc = subprocess.Popen(
         [
             chrome_path,
@@ -114,8 +128,7 @@ def launch_human_chrome(url: str):
             "--no-first-run",
             "--no-default-browser-check",
             "--do-not-de-elevate",
-            "--window-size=980,760",
-            "--window-position=200,80",
+            *window,
             url,
         ],
         stdout=subprocess.DEVNULL,
@@ -184,6 +197,8 @@ async def launch_browser_resilient(playwright=None, *, headless: bool = True, ar
                 for a in args:
                     if a.split("=")[0] not in existing_keys:
                         launch_args.append(a)
+
+            launch_args = with_low_memory_chrome_args(launch_args)
 
             proc = subprocess.Popen(
                 launch_args,

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.73 - 2026-11-26
+
+- COTAÇÃO: em computador com até 3 GB de RAM, ou com pouca memória livre, cada transportadora abre um Chrome por vez e o fecha ao terminar. O preenchimento dos portais não muda. Máquinas com mais memória continuam cotando em paralelo.
+
 ## 2.72 - 2026-11-23
 
 - BRASPRESS: o login com o visto "Confirme que é humano" abre um Chrome normal, e a cotação continua nessa mesma aba depois do acesso.
