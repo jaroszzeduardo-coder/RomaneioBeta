@@ -90,8 +90,13 @@ class CotacaoMixin:
             CHROME_MISSING_USER_MESSAGE,
         )
         try:
+            from cotacao.memory_budget import LOW_MEMORY_USER_MESSAGE, single_chrome_mode
+
+            if single_chrome_mode():
+                self._emit("status_update", {"texto": LOW_MEMORY_USER_MESSAGE})
             if not self._sessao.pronto:
-                self._emit("status_update", {"texto": "Executando pré-login antes da cotação..."})
+                if not single_chrome_mode():
+                    self._emit("status_update", {"texto": "Executando pré-login antes da cotação..."})
                 await self._sessao.inicializar(
                     callback=self._cb_status,
                     login_status_callback=self._cb_login,

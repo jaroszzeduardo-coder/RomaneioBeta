@@ -247,6 +247,8 @@ class AlfaBrowserMixin:
             "--window-size=900,760",
             self.login_url,
         ]
+        from fretio.browser.launcher import with_low_memory_chrome_args
+        cmd = with_low_memory_chrome_args(cmd)
         logger.info(f"[ALFA] Lançando Chrome real na porta {self._debug_port}")
         self._chrome_proc = subprocess.Popen(
             cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

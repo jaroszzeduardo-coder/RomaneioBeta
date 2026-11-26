@@ -10,6 +10,7 @@ import time
 import traceback
 
 from . import deps
+from . import memory_budget
 from .common import (
     ResultadoCotacao,
     ProviderCotacaoStatus,
@@ -938,11 +939,21 @@ async def _executar_cotacoes_com_dados(
     # Maior número = tendência de maior duração (baseado em testes reais).
     tasks.sort(key=lambda t: _PRIORIDADE_LENTIDAO.get(str(t[0]).upper(), 0), reverse=True)
 
-    # Cotações em paralelo (configurável, padrão 3)
+    # Cotações em paralelo (configurável, padrão 3). Pouca RAM reduz o teto.
     fb_cfg = effective_config.get("fretio", {}) if isinstance(effective_config, dict) else {}
-    max_paralelo = max(1, min(7, int(fb_cfg.get("max_paralelo", 3) or 3)))
+    configured_paralelo = max(1, min(7, int(fb_cfg.get("max_paralelo", 3) or 3)))
+    serial_por_memoria = memory_budget.single_chrome_mode()
+    max_paralelo = memory_budget.chrome_concurrency_limit(configured_paralelo)
     nomes_tasks = ", ".join(nome for nome, _provider, _kwargs in tasks)
-    _log_diag(f"Executando {len(tasks)} cotações em paralelo (máx {max_paralelo}): {nomes_tasks}")
+    _log_diag(
+        f"Executando {len(tasks)} cotações em paralelo "
+        f"(máx {max_paralelo}, configurado {configured_paralelo}): {nomes_tasks}"
+    )
+    if serial_por_memoria:
+        _log_diag(
+            "Memória baixa: um Chrome por vez. "
+            "O navegador fecha ao terminar cada transportadora."
+        )
     resultados: list[ResultadoCotacao] = []
     total_cotacoes = len(tasks) + len(erros_setup)
     concluidas = 0
@@ -1025,17 +1036,53 @@ async def _executar_cotacoes_com_dados(
                 erro=exc, duration_ms=_duration_ms(),
             )
 
+    async def _soltar_chrome(nome: str, provider: Any) -> None:
+        if not serial_por_memoria or provider is None:
+            return
+        fechou = False
+        fechar = getattr(sessao, "fechar_provider", None) if sessao is not None else None
+        if callable(fechar):
+            try:
+                fechou = bool(
+                    await fechar(
+                        str(nome).strip().lower(),
+                        success_message=f"Memória baixa: Chrome de {nome} fechado",
+                        failure_message=f"Memória baixa: falha ao fechar Chrome de {nome}",
+                        expected=provider,
+                    )
+                )
+            except Exception as exc:
+                _log_diag(f"Memória baixa: fechar {nome} falhou: {exc}")
+        if fechou:
+            return
+        cleanup = getattr(provider, "cleanup", None)
+        if not callable(cleanup):
+            return
+        try:
+            await asyncio.wait_for(cleanup(), timeout=8)
+            _log_diag(f"Memória baixa: Chrome de {nome} fechado")
+        except Exception as exc:
+            _log_diag(f"Memória baixa: falha ao fechar Chrome de {nome}: {exc}")
+
     async def _exec(i: int, nome: str, provider: Any, kwargs: dict[str, Any]):
         is_alfa = nome.upper() == "ALFA"
         # `async with semaforo` garante release mesmo se a Task for cancelada
         # exatamente entre o retorno de acquire() e o try interno — janela
         # cancellation-unsafe que existia no padrão acquire/try/finally.
-        # ALFA continua fora do semáforo (login manual com Turnstile).
-        if is_alfa:
-            return await _run_cotacao(i, nome, provider, kwargs, is_alfa)
+        # ALFA fica fora do semáforo quando há RAM: o Turnstile dela não muda.
+        # Com pouca memória ela entra na mesma fila, para existir um Chrome só.
+
+        async def _rodar():
+            try:
+                return await _run_cotacao(i, nome, provider, kwargs, is_alfa)
+            finally:
+                await _soltar_chrome(nome, provider)
+
+        if is_alfa and not serial_por_memoria:
+            return await _rodar()
         async with semaforo:
             _log_diag(f"Semáforo adquirido: {nome} (posição {i})")
-            return await _run_cotacao(i, nome, provider, kwargs, is_alfa)
+            return await _rodar()
 
     def _processar_resultado(res, resultados, falhas_para_retry):
         """Despacha um CotacaoOutcome para o handler da sua forma de resultado."""
@@ -1351,6 +1398,11 @@ async def _executar_cotacoes_com_dados(
 
     # ── Rodada 1: executa todas as cotações ──
     falhas_para_retry: list[tuple[str, Any, dict[str, Any]]] = []
+    if serial_por_memoria and sessao is not None:
+        fechar_todos = getattr(sessao, "fechar_providers_exceto", None)
+        if callable(fechar_todos):
+            _log_diag("Memória baixa: fechando Chromes já abertos antes de cotar um por vez")
+            await fechar_todos(set(), contexto="Memória baixa")
     futuros = []
     for i, (nome, prov, kwargs) in enumerate(tasks):
         t = asyncio.create_task(_exec(i, nome, prov, kwargs))

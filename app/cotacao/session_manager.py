@@ -20,6 +20,7 @@ from .common import (
     _remote_disabled_results_for_config,
     _trd_headless_config_value,
 )
+from . import memory_budget
 from .config import _carregar_config
 from .validation import _uf_atendida
 from .error_context import is_expected_prelogin_failure, report_provider_error
@@ -137,7 +138,7 @@ _TIMEOUT_COTACAO_S: dict[str, int] = {
     # SSW providers: polling até 25s + fallbacks → dar margem para completar internamente
     "COOPEX": 90,
     "EUCATUR": 90,
-    # Login pode esperar o captcha da Braspress e ainda preencher a cotação.
+    # O Turnstile da Braspress conclui no Chrome real antes do preenchimento.
     "BRASPRESS": 300,
 }
 _TIMEOUT_COTACAO_PADRAO_S = 45
@@ -341,6 +342,9 @@ class TransportadoraSession:
 
     async def _executar_lazy_prelogin(self, nome: str, provider: Any) -> None:
         nome_normalizado = str(nome).strip().lower()
+        if memory_budget.single_chrome_mode():
+            _log_diag(f"Memória baixa: pré-login de {nome_normalizado.upper()} fica para a cotação")
+            return
         if nome_normalizado not in self._LAZY_PRELOGIN_PROVIDERS:
             return
         pre_login = getattr(provider, "pre_login", None)
@@ -452,6 +456,17 @@ class TransportadoraSession:
                 pass
             self._chrome_missing = False
             self._chrome_missing_message = ""
+
+            if memory_budget.single_chrome_mode():
+                _log_diag(
+                    "Memória baixa: pré-login adiado. "
+                    "Cada transportadora abre o Chrome só na própria cotação."
+                )
+                if callback:
+                    callback(memory_budget.LOW_MEMORY_USER_MESSAGE)
+                self._inicializado = True
+                self._iniciar_verificador_ocioso()
+                return
 
             effective_config = dict(self.config) if isinstance(self.config, dict) else {}
             transportadoras_cfg = effective_config.get("transportadoras", {}) if isinstance(effective_config, dict) else {}

@@ -71,6 +71,7 @@ hiddenimports = [
     "extrator_pedidos_boxes",
     "cotacao_transportadoras",
     "cotacao.orchestrator_builders",
+    "cotacao.memory_budget",
     "updater",
     "update_security",
     "remote_permissions",

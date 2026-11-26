@@ -320,6 +320,9 @@ class RodonavesBrowserMixin:
             if self.headless:
                 launch_args.append("--headless=new")
 
+            from fretio.browser.launcher import with_low_memory_chrome_args
+            launch_args = with_low_memory_chrome_args(launch_args)
+
             self._chrome_proc = subprocess.Popen(
                 launch_args,
                 stdout=subprocess.DEVNULL,
