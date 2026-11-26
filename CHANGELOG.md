@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.74 - 2026-11-26
+
+- EUCATUR: o reCAPTCHA da tela de login do TMS é marcado pelo próprio programa no Chrome real, e a cotação segue sem alguém precisar clicar.
+
 ## 2.73 - 2026-11-26
 
 - COTAÇÃO: em computador com até 3 GB de RAM, ou com pouca memória livre, cada transportadora abre um Chrome por vez e o fecha ao terminar. O preenchimento dos portais não muda. Máquinas com mais memória continuam cotando em paralelo.

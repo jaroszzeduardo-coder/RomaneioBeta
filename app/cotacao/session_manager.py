@@ -137,7 +137,8 @@ _TIMEOUT_COTACAO_S: dict[str, int] = {
     "AGEX": 90,
     # SSW providers: polling até 25s + fallbacks → dar margem para completar internamente
     "COOPEX": 90,
-    "EUCATUR": 90,
+    # WAF do TMS mais o reCAPTCHA do login, que o Chrome conclui sozinho.
+    "EUCATUR": 150,
     # O Turnstile da Braspress conclui no Chrome real antes do preenchimento.
     "BRASPRESS": 300,
 }
@@ -145,6 +146,7 @@ _TIMEOUT_COTACAO_PADRAO_S = 45
 
 _TIMEOUT_PRELOGIN_S: dict[str, int] = {
     "ALFA": 90,
+    "EUCATUR": 120,
     "TRD": 90,
     "TRANSLOVATO": 90,
     "RODONAVES": 60,

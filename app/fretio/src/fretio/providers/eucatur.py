@@ -24,6 +24,7 @@ class EucaturProvider(ProviderBase):
     LOGIN_URL = "https://tms.ssw.inf.br/bin/ssw0422"
     COTACAO_URL = "https://tms.ssw.inf.br/bin/ssw1608"
     _WAF_TIMEOUT_S = 45.0
+    _RECAPTCHA_TIMEOUT_S = 25.0
     # O interstitial da AWS WAF recarrega sozinho quando o token sai. Enquanto
     # o Playwright está ligado, o desafio não conclui e a tela pede clique.
     _WAF_STATE_JS = """(() => {
@@ -260,6 +261,61 @@ class EucaturProvider(ProviderBase):
             await self.cleanup()
             raise
 
+    async def _token_recaptcha(self) -> str:
+        page = self._page
+        if page is None:
+            return ""
+        try:
+            valor = await page.evaluate(
+                """() => {
+                    const el = document.querySelector('textarea[name="g-recaptcha-response"]');
+                    return el && el.value ? String(el.value) : '';
+                }"""
+            )
+        except Exception:
+            return ""
+        return str(valor or "")
+
+    async def _ancora_recaptcha(self):
+        """Caixa compacta do reCAPTCHA na tela de login. None se o portal não mostrou."""
+        page = self._page
+        if page is None:
+            return None
+        ancora = page.frame_locator("iframe[src*='api2/anchor']").locator("#recaptcha-anchor")
+        for _ in range(16):
+            try:
+                if await ancora.count() > 0:
+                    return ancora
+            except Exception:
+                return None
+            await page.wait_for_timeout(500)
+        return None
+
+    async def _aguardar_recaptcha(self) -> bool:
+        """Marca o reCAPTCHA do login no Chrome real e espera o token, sem clique da pessoa."""
+        if len(await self._token_recaptcha()) > 20:
+            return True
+        ancora = await self._ancora_recaptcha()
+        if ancora is None:
+            return True
+        try:
+            marcado = await ancora.get_attribute("aria-checked")
+        except Exception:
+            marcado = None
+        if marcado != "true":
+            try:
+                await ancora.click(timeout=8000)
+            except Exception as exc:
+                logger.warning("[%s] Clique automático no reCAPTCHA não registrou: %s", self.nome, exc)
+        limite = float(self._RECAPTCHA_TIMEOUT_S or 0)
+        loops = max(1, int(limite / 0.5))
+        for _ in range(loops):
+            await self._page.wait_for_timeout(500)
+            if len(await self._token_recaptcha()) > 20:
+                logger.info("[%s] reCAPTCHA do login concluído automaticamente", self.nome)
+                return True
+        return False
+
     async def _login(self):
         """Faz login no portal SSW."""
         if self._logged_in:
@@ -277,6 +333,8 @@ class EucaturProvider(ProviderBase):
             await self._page.locator('input[name=f1]').fill(self.dominio)
             await self._page.locator('input[name=f3]').fill(self.usuario)
             await self._page.locator('input[name=f4]').fill(self.senha)
+            if not await self._aguardar_recaptcha():
+                raise RuntimeError("Eucatur: reCAPTCHA do login não concluiu sozinho")
             await self._page.locator('a:has-text("►")').click()
 
             # Aguarda redirecionamento pós-login (polling reativo até 10s)
@@ -870,15 +928,7 @@ class EucaturProvider(ProviderBase):
 
             await self._init_browser()
             await self._login()
-
-            # Criar nova página para cada cotação (mantém sessão via cookies do contexto)
-            if self._logged_in:
-                try:
-                    await self._page.close()
-                except Exception:
-                    pass
-                self._page = await self._context.new_page()
-
+            # A aba do login segue para a cotação. Fechar a única aba encerra o Chrome.
             await self._navegar_cotacao()
             await self._preencher_cotacao(origem, destino, peso, valor, volumes, cubagem_m3,
                                          comprimento_cm, largura_cm, altura_cm,

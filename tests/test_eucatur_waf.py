@@ -163,3 +163,93 @@ def test_cleanup_encerra_chrome_orfao_da_verificacao(monkeypatch, tmp_path):
     assert provider._profile_dir is None
     assert provider._browser is None
     assert provider._page is None
+
+
+class _Ancora:
+    def __init__(self, *, presente: bool, marcado: str = "false", token_depois: bool = False):
+        self.presente = presente
+        self.marcado = marcado
+        self.token_depois = token_depois
+        self.cliques = 0
+
+    async def count(self):
+        return 1 if self.presente else 0
+
+    async def get_attribute(self, nome):
+        assert nome == "aria-checked"
+        return self.marcado
+
+    async def click(self, timeout=8000):
+        self.cliques += 1
+        if self.token_depois:
+            self.marcado = "true"
+
+
+class _PaginaRecaptcha:
+    def __init__(self, ancora: _Ancora, token_inicial: str = ""):
+        self.ancora = ancora
+        self.token = token_inicial
+        self.esperas = 0
+        self.seletor_iframe = ""
+
+    def frame_locator(self, seletor):
+        self.seletor_iframe = seletor
+        return self
+
+    def locator(self, seletor):
+        assert seletor == "#recaptcha-anchor"
+        return self.ancora
+
+    async def evaluate(self, _script):
+        if self.ancora.cliques and self.ancora.token_depois:
+            self.token = "t" * 40
+        return self.token
+
+    async def wait_for_timeout(self, _ms):
+        self.esperas += 1
+
+
+def test_recaptcha_ausente_segue_o_login():
+    provider = _provider()
+    provider._page = _PaginaRecaptcha(_Ancora(presente=False))
+
+    assert asyncio.run(provider._aguardar_recaptcha()) is True
+    assert provider._page.ancora.cliques == 0
+
+
+def test_recaptcha_do_login_e_marcado_e_espera_o_token():
+    provider = _provider()
+    provider._page = _PaginaRecaptcha(_Ancora(presente=True, token_depois=True))
+
+    ok = asyncio.run(provider._aguardar_recaptcha())
+
+    assert ok is True
+    assert provider._page.ancora.cliques == 1
+    assert "api2/anchor" in provider._page.seletor_iframe
+
+
+def test_recaptcha_ja_marcado_nao_clica_de_novo():
+    provider = _provider()
+    provider._page = _PaginaRecaptcha(
+        _Ancora(presente=True, marcado="true"),
+        token_inicial="t" * 40,
+    )
+
+    ok = asyncio.run(provider._aguardar_recaptcha())
+
+    assert ok is True
+    assert provider._page.ancora.cliques == 0
+    assert provider._page.esperas == 0
+
+
+def test_recaptcha_sem_token_falha_sozinho(monkeypatch):
+    provider = _provider()
+    provider._RECAPTCHA_TIMEOUT_S = 0.5
+    provider._page = _PaginaRecaptcha(_Ancora(presente=True, token_depois=False))
+
+    async def instant_sleep(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(provider._page, "wait_for_timeout", instant_sleep)
+
+    assert asyncio.run(provider._aguardar_recaptcha()) is False
